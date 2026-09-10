@@ -134,3 +134,11 @@ export async function updateFromDataGouv(progress = () => {}) {
   progress(`Base mise à jour : ${out.length} radars (${date})`);
   return { updated: true, version: date, count: out.length };
 }
+
+/** Vérification automatique de la base (au plus une fois par mois) */
+export async function autoUpdate() {
+  const last = get('radarsCheck', 0);
+  if (Date.now() - last < 30 * 86400 * 1000 || !navigator.onLine) return null;
+  set('radarsCheck', Date.now());
+  try { return await updateFromDataGouv(() => {}); } catch (e) { console.warn('autoUpdate', e); return null; }
+}

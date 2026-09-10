@@ -1,5 +1,5 @@
 // Service worker Vigie : app en cache (hors-ligne), tuiles en cache opportuniste
-const VERSION = 'vigie-v4';
+const VERSION = 'vigie-v5';
 const SHELL = [
   './', './index.html', './css/app.css', './manifest.webmanifest',
   './js/app.js', './js/alerts.js', './js/audio.js', './js/custom.js', './js/geo.js', './js/geom.js', './js/map.js',

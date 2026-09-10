@@ -360,7 +360,7 @@ textarea { width: 100%; min-height: 110px; border-radius: 12px; border: 1px soli
 }
 
 /* --------------------------------------------------------------- navigation (bandeau dans le tiroir) */
-.navstrip { display: none; grid-template-columns: auto 1fr auto auto; align-items: center; gap: 14px; padding: 2px 18px 10px 22px; border-bottom: 1px solid var(--border); margin-bottom: 8px; }
+.navstrip { display: none; grid-template-columns: auto 1fr auto auto auto; align-items: center; gap: 14px; padding: 2px 18px 10px 22px; border-bottom: 1px solid var(--border); margin-bottom: 8px; }
 .navstrip.show { display: grid; }
 .navstrip .v { font-family: var(--font-display); font-weight: 800; letter-spacing: -.03em; line-height: 1.05; }
 .navstrip .k { font-size: 11px; color: var(--text-2); font-weight: 600; text-transform: uppercase; letter-spacing: .06em; margin-top: 2px; }
@@ -368,6 +368,8 @@ textarea { width: 100%; min-height: 110px; border-radius: 12px; border: 1px soli
 .navstrip .ns-mid .v { font-size: 18px; }
 .navstrip .ns-mid .k { text-transform: none; font-size: 13px; letter-spacing: 0; }
 .navstrip .ns-cost { text-align: right; }
+.navstrip { gap: 10px; padding-left: 18px; }
+.navstrip .ns-eta .v { font-size: 26px; }
 .navstrip .ns-cost .v { font-size: 18px; }
 .navstrip .ns-cost .k { text-transform: none; letter-spacing: 0; }
 .navstrip .ns-close { width: 36px; height: 36px; border-radius: 50%; background: var(--surface-2); display: grid; place-items: center; color: var(--text-2); }
@@ -412,3 +414,33 @@ textarea { width: 100%; min-height: 110px; border-radius: 12px; border: 1px soli
 .tag.bad { color: var(--danger); }
 .tag svg { width: 13px; height: 13px; }
 #planList { margin-top: 12px; }
+
+/* --------------------------------------------------------------- reprise, lieux, stations, étapes */
+.resume { pointer-events: none; opacity: 0; position: absolute; left: 50%; transform: translate(-50%, -200%); top: calc(var(--sat) + 62px); width: min(94vw, 440px); z-index: 7; display: flex; align-items: center; gap: 10px; padding: 12px 12px 12px 16px; border-radius: var(--radius); background: var(--surface-solid); box-shadow: var(--shadow); border: 1px solid var(--border); transition: transform .45s cubic-bezier(.2, .9, .3, 1.2); }
+.resume.show { transform: translate(-50%, 0); pointer-events: auto; opacity: 1; }
+.resume .rs-txt { flex: 1; min-width: 0; }
+.resume .rs-t { font-weight: 700; }
+.resume .rs-s { font-size: 13px; color: var(--text-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.resume .rs-no { padding: 10px 12px; border-radius: 12px; font-weight: 700; color: var(--text-2); }
+.resume .rs-yes { padding: 10px 14px; border-radius: 12px; font-weight: 700; background: var(--accent); color: #fff; }
+.places { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 12px; }
+.place { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-radius: var(--radius-sm); background: var(--surface-2); text-align: left; min-width: 0; }
+.place .pl-ic { width: 36px; height: 36px; border-radius: 50%; background: var(--accent-soft); color: var(--accent); display: grid; place-items: center; flex: none; }
+.place .pl-ic svg { width: 20px; height: 20px; }
+.place .pl-t { font-weight: 700; font-size: 14px; }
+.place .pl-s { font-size: 12px; color: var(--text-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.place.unset .pl-s { color: var(--accent); }
+.row .star { width: 36px; height: 36px; border-radius: 50%; display: grid; place-items: center; color: var(--text-3); }
+.row .star.on { color: var(--warn); }
+.row .star svg { width: 20px; height: 20px; }
+.row .price { font-family: var(--font-display); font-weight: 800; font-size: 18px; letter-spacing: -.02em; text-align: right; color: var(--ok); }
+.row .price small { display: block; font-size: 10px; color: var(--text-2); font-weight: 700; text-transform: uppercase; }
+.row .pin.fuel { background: rgba(22, 163, 74, .15); color: var(--ok); }
+.chipbtn.via { display: inline-flex; align-items: center; gap: 6px; }
+.chipbtn.via svg { width: 14px; height: 14px; }
+.chipbtn.add { border-style: dashed; border-color: var(--text-3); color: var(--text-2); background: transparent; }
+.speed.est .v { color: var(--text-2); }
+.speed.est .v::before { content: "~"; font-size: .6em; vertical-align: top; margin-right: 2px; }
+.station-marker { display: flex; flex-direction: column; align-items: center; transform: translateY(-4px); }
+.station-marker .sm-price { padding: 3px 7px; border-radius: 999px; background: #16a34a; color: #fff; font-weight: 800; font-size: 12px; box-shadow: 0 2px 6px rgba(0,0,0,.3); white-space: nowrap; }
+.station-marker .sm-dot { width: 8px; height: 8px; border-radius: 50%; background: #16a34a; border: 2px solid #fff; margin-top: 2px; }

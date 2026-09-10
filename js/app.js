@@ -11,7 +11,8 @@ import * as map from './map.js';
 import * as ui from './ui.js';
 import * as sim from './sim.js';
 import * as route from './route.js';
-import { blendHeading } from './geom.js';
+import { blendHeading, fmtKm } from './geom.js';
+import * as fuel from './fuel.js';
 import { createEngine } from './alerts.js';
 
 const engine = createEngine(S, handleEngineEvent);
@@ -19,15 +20,36 @@ let started = false;
 let lastNextUpdate = 0;
 let wakeLock = null;
 let activeId = null;
+let firstFixDone = false;
+const overAtClose = new Map();
+let lastLimitSpoken = null, lastLimitSpeakTs = 0;
+
+function onFirstFix(fix) {
+  const sv = route.saved();
+  if (sv && !route.isActive()) ui.showResume(sv.dest.name);
+  loadStations();
+}
+async function loadStations() {
+  try {
+    const f = geo.geo.last; if (!f) return;
+    let list, onRoute = false;
+    if (route.isActive()) { list = route.route.stations || await fuel.stationsAlong(route.route.coords, route.route.cum); route.route.stations = list; onRoute = true; }
+    else list = await fuel.stationsNear(f.lat, f.lon, 10, 3);
+    ui.setStations(list, onRoute); map.setStations(list);
+  } catch (e) { console.warn('stations', e); }
+}
+on('ui:stations', loadStations);
 
 // ---------------------------------------------------------------- démarrage
 map.init('map', ui.resolveTheme());
 ui.init();
 trip.init();
 
-radars.load().then(() => {
+radars.load().then(async () => {
   custom.init();
   if (map.getMap().loaded()) map.refreshRadars();
+  const up = await radars.autoUpdate();
+  if (up && up.updated) { map.refreshRadars(); ui.toast(`Base radars mise à jour (${up.count} radars du ${up.version.split('-').reverse().join('/')})`, 4000); }
 }).catch(e => { console.error(e); ui.toast('Impossible de charger la base radars'); });
 on('map:ready', () => map.refreshRadars());
 on('radars', () => map.refreshRadars());
@@ -66,15 +88,20 @@ async function requestWakeLock() {
     }
   } catch (e) { console.warn('wakeLock', e); }
 }
-document.addEventListener('visibilitychange', () => { if (!document.hidden && started) requestWakeLock(); });
+document.addEventListener('visibilitychange', () => { if (!document.hidden && started) requestWakeLock(); else route.saveProgress(); });
+window.addEventListener('pagehide', () => route.saveProgress());
 on('ui:wakelock', requestWakeLock);
+geo.setEstimator(d => route.isActive() ? route.pointAt(route.route.userS + d) : null);
+on('geo:lost', () => { ui.setGps('bad', 'GPS perdu · estimation'); ui.toast('Signal GPS perdu, position estimée', 3000); });
+on('geo:recovered', () => ui.toast('Signal GPS retrouvé'));
 on('ui:audio', () => audio.unlock());
 
 // ---------------------------------------------------------------- position
 on('fix', fix => {
   const kmh = fix.speed * 3.6;
-  ui.setSpeed(kmh);
-  ui.setGps(fix.quality, fix.quality === 'ok' ? 'GPS' : fix.quality === 'weak' ? `GPS ±${Math.round(fix.acc)} m` : 'GPS faible');
+  ui.setSpeed(kmh, fix.estimated);
+  if (!fix.estimated) ui.setGps(fix.quality, fix.quality === 'ok' ? 'GPS' : fix.quality === 'weak' ? `GPS ±${Math.round(fix.acc)} m` : 'GPS faible');
+  if (!firstFixDone && !fix.sim) { firstFixDone = true; onFirstFix(fix); }
 
   window.__vigiePos = { lat: fix.lat, lon: fix.lon };
 
@@ -113,8 +140,12 @@ on('ui:routeto', dest => {
   if (!geo.geo.last) { ui.toast('Position GPS inconnue, réessayez dans un instant'); return; }
   ui.openPlan(dest);            // planification façon Waze : choix du trajet, coûts, radars
 });
+function afterRouteStart() {
+  loadStations();
+}
 on('ui:routestart', ({ dest, route: r, opts }) => {
   route.start(dest, r, opts);
+  afterRouteStart();
   engine.reset(); activeId = null; ui.hideAlert(); lastTurn = '';
   const f = geo.geo.last;
   if (f) { const nav = route.update(f); ui.setNav(nav); ui.setTurn(nav.maneuver); }
@@ -123,8 +154,46 @@ on('ui:routestart', ({ dest, route: r, opts }) => {
   map.setFollow(true);
   audio.chime();                // pas d'annonce vocale au départ
 });
-on('ui:routestop', () => { stopRoute(); ui.toast('Itinéraire arrêté'); });
-function stopRoute() { route.stop(); ui.setNav(null); ui.setTurn(null); ui.setNextTitle(false); engine.reset(); activeId = null; ui.hideAlert(); map.refreshRoute(); }
+on('ui:routestop', () => { stopRoute(); ui.toast('Itinéraire arrêté'); loadStations(); });
+on('ui:resume', () => {
+  const st = route.resume(); if (!st) { ui.toast('Itinéraire expiré'); return; }
+  engine.reset(); activeId = null; ui.hideAlert(); lastTurn = '';
+  const f = geo.geo.last; if (f) { const nav = route.update(f); ui.setNav(nav); ui.setTurn(nav.maneuver); }
+  ui.setNext(route.nextOnRoute(3)); ui.setNextTitle(true); map.refreshRoute(); map.setFollow(true);
+  ui.toast('Itinéraire repris vers ' + st.dest.name); afterRouteStart();
+});
+on('ui:share', async () => {
+  if (!route.isActive()) return;
+  const f = geo.geo.last; const nav = f ? route.update(f) : null;
+  const eta = nav ? new Date(Date.now() + nav.etaSec * 1000).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }) : '?';
+  const text = `J’arrive vers ${eta} à ${route.route.dest.name}${nav ? ' (' + fmtKm(nav.remaining, 0) + ' km restants)' : ''}. Envoyé depuis Vigie.`;
+  try { if (navigator.share) await navigator.share({ text }); else location.href = 'sms:&body=' + encodeURIComponent(text); }
+  catch { /* annulé */ }
+});
+on('ui:via', d => { if (!ui.addVia(d)) ui.openPlan(d); });
+on('ui:station', async st => {
+  const v = { name: 'Station ' + (st.city || st.name), sub: st.name, lat: st.lat, lon: st.lon };
+  if (route.isActive()) {
+    const f = geo.geo.last; if (!f) return;
+    route.route.via = [...route.route.via.filter(x => !x.passed), { ...v, passed: false }];
+    route.route.opts = { ...route.route.opts, via: route.route.via };
+    ui.toast('Ajout de la station au trajet…');
+    const ok = await route.reroute(f);
+    if (ok) { engine.reset(); activeId = null; ui.hideAlert(); lastTurn = ''; map.refreshRoute(); loadStations(); ui.toast('Trajet mis à jour via la station'); }
+  } else if (ui.currentPlanDest()) ui.addVia(v);
+  else ui.openPlan(v);
+});
+on('ui:gpx', async t => {
+  const gpx = trip.toGpx(t);
+  const name = 'vigie-' + new Date(t.start).toISOString().slice(0, 16).replace(/[:T]/g, '-') + '.gpx';
+  try {
+    const file = new File([gpx], name, { type: 'application/gpx+xml' });
+    if (navigator.canShare && navigator.canShare({ files: [file] })) { await navigator.share({ files: [file], title: name }); return; }
+  } catch { /* on tente autre chose */ }
+  try { await navigator.clipboard.writeText(gpx); ui.toast('GPX copié dans le presse-papiers'); }
+  catch { const a = document.createElement('a'); a.href = 'data:application/gpx+xml;charset=utf-8,' + encodeURIComponent(gpx); a.download = name; document.body.appendChild(a); a.click(); a.remove(); }
+});
+function stopRoute() { route.stop(); ui.setNav(null); map.setStations([]); ui.setTurn(null); ui.setNextTitle(false); engine.reset(); activeId = null; ui.hideAlert(); map.refreshRoute(); }
 function onArrived() { audio.ok(); if (S.turnVoice) audio.speak('Vous êtes arrivé à destination', { priority: true }); stopRoute(); ui.toast('Arrivé à destination', 4000); }
 async function doReroute(fix) {
   if (S.turnVoice) audio.speak('Recalcul de l’itinéraire');
@@ -167,11 +236,13 @@ function handleEngineEvent(type, p) {
       break;
     }
     case 'close':
+      overAtClose.set(p.r.id, !!p.over);
       if (p.over) { audio.urgent(); audio.speak('Ralentissez', { priority: true }); }
       else audio.beep2();
       break;
     case 'passed':
       if (p.r.id === activeId) { activeId = null; ui.hideAlert(); }
+      if (p.r.type) { trip.radarPassed(overAtClose.get(p.r.id) || false); overAtClose.delete(p.r.id); }
       break;
     case 'cancel':
       if (p.r.id === activeId) { activeId = null; ui.hideAlert(); }
@@ -182,9 +253,15 @@ function handleEngineEvent(type, p) {
         else ui.updateAlert({ d: p.d, level: level(p.r, p.speedKmh), trigger: p.trigger });
       } else if (activeId) { activeId = null; ui.hideAlert(); }
       break;
-    case 'limit':
-      ui.setLimit(p);
+    case 'limit': {
+      ui.setLimit(p); trip.setLimit(p);
+      // annonce vocale des changements de limitation (hors radar : la phrase radar la contient déjà)
+      const f = geo.geo.last;
+      if (p && p.source !== 'radar' && p.source !== 'tronçon' && S.limitVoice && f && f.speed > 3 && p.limit !== lastLimitSpoken && Date.now() - lastLimitSpeakTs > 6000) {
+        lastLimitSpoken = p.limit; lastLimitSpeakTs = Date.now(); audio.speak(`Limité à ${p.limit}`);
+      }
       break;
+    }
     case 'overspeed':
       audio.tick();
       break;

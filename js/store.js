@@ -39,7 +39,9 @@ export const DEFAULTS = {
   autoZoom: true,
   showAllRadars: true,
   routeOnly: true,          // avec itinéraire : n'alerter que les radars du trajet
-  turnVoice: false,         // annonces vocales des manœuvres
+  turnVoice: false,
+  limitVoice: true,         // « Limité à 50 » à chaque changement de zone
+  filterOpposite: true,     // écarte les radars à contresens sur itinéraire         // annonces vocales des manœuvres
   avoidTolls: false,
   avoidRadars: false,
   fuelType: 'sp98',

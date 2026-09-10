@@ -1,5 +1,5 @@
 // Interface : tiroir, carte d'alerte, panneaux, réglages, feuilles modales
-import { S, DEFAULTS, setSetting, saveSettings, on, emit } from './store.js';
+import { S, DEFAULTS, setSetting, saveSettings, on, emit, get, set } from './store.js';
 import { TYPES, radars } from './radars.js';
 import { fmtDist, fmtKm, fmtDuration } from './geom.js';
 import * as trip from './trip.js';
@@ -50,8 +50,13 @@ export function init() {
   $('actSim').addEventListener('click', () => { closeSheet(); emit('ui:sim'); });
   $('btnNewTrip').addEventListener('click', () => { trip.newTrip(); toast('Nouveau trajet démarré'); });
   el.simStop.addEventListener('click', () => emit('ui:simstop'));
-  $('btnRoute').addEventListener('click', openRoute);
+  $('btnRoute').addEventListener('click', () => openRoute());
   $('nsStop').addEventListener('click', () => emit('ui:routestop'));
+  $('nsShare').addEventListener('click', () => emit('ui:share'));
+  $('resumeYes').addEventListener('click', () => { hideResume(); emit('ui:resume'); });
+  $('resumeNo').addEventListener('click', () => { hideResume(); route.discardSaved(); });
+  $('favsEdit').addEventListener('click', () => { favsEditing = !favsEditing; renderPlaces(); });
+  $('stationsRefresh').addEventListener('click', () => emit('ui:stations'));
   $('navstrip').addEventListener('click', e => { if (!e.target.closest('#nsStop')) map.fitRoute(); });
   $('planGo').addEventListener('click', () => { if (planSel) { close('mPlan'); emit('ui:routestart', { dest: planDest, route: planSel, opts: planOpts() }); } });
   $('planOpts').querySelectorAll('.chipbtn').forEach(b => b.addEventListener('click', () => { setSetting(b.dataset.k, !S[b.dataset.k]); b.classList.toggle('on', S[b.dataset.k]); runPlan(); }));
@@ -109,9 +114,10 @@ export function setGps(quality, text) {
 
 // ---------------------------------------------------------------- vitesse / limite / trajet
 let currentLimit = null;
-export function setSpeed(kmh) {
+export function setSpeed(kmh, estimated = false) {
   const v = Math.round(kmh);
   el.speedV.textContent = v;
+  el.speedBox.classList.toggle('est', !!estimated);
   const lim = currentLimit?.limit;
   el.speedBox.classList.toggle('over', !!lim && v > lim + S.tolerance);
   el.speedBox.classList.toggle('warn', !!lim && v > lim && v <= lim + S.tolerance);
@@ -130,6 +136,11 @@ function renderTrip(t) {
   el.stAvg.textContent = Math.round(trip.avgSpeedKmh());
   el.stMax.textContent = Math.round(tr.maxSpeed * 3.6);
   el.stOdo.textContent = fmtKm(t.odometer, t.odometer < 100000 ? 1 : 0);
+  const op = trip.overPct(); $('stOver').textContent = op == null ? '–' : op + ' %';
+  $('stOver').style.color = op == null ? '' : op > 20 ? 'var(--danger)' : op > 5 ? 'var(--warn)' : 'var(--ok)';
+  $('stRadPass').textContent = tr.radars || 0; $('stRadOver').textContent = tr.radarsOver || 0;
+  $('stRadOver').style.color = tr.radarsOver ? 'var(--danger)' : '';
+  $('stFuel').textContent = trip.fuelCost().toFixed(2).replace('.', ',') + ' €';
 }
 
 export function setNextTitle(onRoute) { $('nextTitle').textContent = onRoute ? 'Radars sur le trajet' : 'Prochains radars'; }
@@ -262,8 +273,9 @@ export function openHistory() {
   $('listTitle').textContent = 'Trajets';
   const h = trip.trip.history;
   const c = $('listContent');
-  c.innerHTML = (h.length ? `<div class="list">${h.map(t => `<div class="row" style="grid-template-columns:1fr auto"><div><div class="t">${new Date(t.start).toLocaleDateString('fr-FR', { weekday: 'short', day: 'numeric', month: 'short' })} · ${new Date(t.start).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}</div><div class="s">${fmtDuration(t.end - t.start)} · moy ${t.avg} km/h · max ${t.maxSpeed} km/h</div></div><div class="d num">${fmtKm(t.dist)}<small>km</small></div></div>`).join('')}</div>` : '<div class="empty">Aucun trajet enregistré (les trajets de plus de 300 m sont archivés).</div>')
+  c.innerHTML = (h.length ? `<div class="list">${h.map(t => `<div class="row" style="grid-template-columns:1fr auto"><div><div class="t">${new Date(t.start).toLocaleDateString('fr-FR', { weekday: 'short', day: 'numeric', month: 'short' })} · ${new Date(t.start).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}</div><div class="s">${fmtDuration(t.end - t.start)} · moy ${t.avg} km/h · max ${t.maxSpeed} km/h${t.overPct != null ? ' · ' + t.overPct + ' % en excès' : ''}${t.radars ? ' · ' + t.radars + ' radar' + (t.radars > 1 ? 's' : '') + (t.radarsOver ? ' (' + t.radarsOver + ' en excès)' : '') : ''}${t.fuelCost ? ' · ≈ ' + t.fuelCost.toFixed(2).replace('.', ',') + ' €' : ''}</div></div><div class="d num">${fmtKm(t.dist)}<small>km</small>${t.pts && t.pts.length > 1 ? `<button class="gpx" data-i="${h.indexOf(t)}" style="font-size:11px;color:var(--accent);font-weight:700">GPX</button>` : ''}</div></div>`).join('')}</div>` : '<div class="empty">Aucun trajet enregistré (les trajets de plus de 300 m sont archivés).</div>')
     + `<div class="btnrow" style="margin-top:14px"><button class="btn secondary" id="hReset">Remettre l'odomètre à 0</button><button class="btn danger" id="hClear">Effacer l'historique</button></div>`;
+  c.querySelectorAll('.gpx').forEach(b => b.addEventListener('click', () => emit('ui:gpx', h[+b.dataset.i])));
   c.querySelector('#hReset').addEventListener('click', () => { if (confirm('Remettre le total de kilomètres à zéro ?')) { trip.resetOdometer(); toast('Odomètre remis à zéro'); } });
   c.querySelector('#hClear').addEventListener('click', () => { if (confirm('Effacer tous les trajets ?')) { trip.clearHistory(); openHistory(); } });
   open('mList');
@@ -297,6 +309,7 @@ const SCHEMA = [
   ['overspeedAlert', 'toggle', 'Alerte dépassement', 'Petit son toutes les 15 s au-dessus de la limite'],
   ['tolerance', 'number', 'Tolérance (km/h)', 'Marge avant de passer au rouge', { min: 0, max: 20, step: 1 }],
   ['routeOnly', 'toggle', 'Itinéraire : radars du trajet seulement', 'Avec un itinéraire actif, ignore les radars qui ne sont pas sur la route'],
+  ['limitVoice', 'toggle', 'Annoncer les limitations', 'Voix « Limité à 50 » à chaque changement de zone (limites OpenStreetMap)'],
   ['dangerZone', 'toggle', 'Mode zone de danger', 'Alerte « zone de contrôle » à 2 km sans distance précise, façon assistant d\'aide à la conduite'],
   ['Carte'],
   ['mapStyle', 'select', 'Style de carte', '', [['auto', 'Auto (jour / nuit)'], ['liberty', 'Liberty'], ['bright', 'Bright'], ['positron', 'Positron'], ['dark', 'Dark'], ['fiord', 'Fiord']]],
@@ -306,6 +319,7 @@ const SCHEMA = [
   ['osmLimits', 'toggle', 'Limites de vitesse OpenStreetMap', 'Affiche la limite de la route hors radar (couverture partielle)'],
   ['keepAwake', 'toggle', 'Écran toujours allumé', 'Nécessaire pour les alertes : iOS coupe le GPS écran éteint'],
   ['Itinéraire'],
+  ['filterOpposite', 'toggle', 'Ignorer les radars à contresens', 'Sur itinéraire, écarte les radars dont le sens de contrôle (« Paris vers Lille ») est opposé au vôtre'],
   ['turnVoice', 'toggle', 'Guidage vocal des manœuvres', 'Annonce les changements de direction (sinon guidage visuel seulement)'],
   ['fuelType', 'select', 'Carburant', 'Prix moyen national en direct (data.economie.gouv.fr)', [['sp98', 'SP98'], ['sp95', 'SP95'], ['e10', 'SP95-E10'], ['gazole', 'Gazole'], ['e85', 'E85']]],
   ['consumption', 'number', 'Consommation (L/100 km)', '', { min: 2, max: 25, step: 0.5 }],
@@ -364,18 +378,53 @@ async function runSearch(text) {
   try { res = await route.geocode(text, window.__vigiePos || null); } catch { res = []; }
   if (seq !== searchSeq) return;
   if (!res.length) { box.innerHTML = '<div class="empty">Aucun résultat</div>'; return; }
-  box.innerHTML = res.map((r, i) => `<button class="row" data-i="${i}">${PIN}<div><div class="t">${esc(r.name)}</div><div class="s">${esc(r.sub)}</div></div><div></div></button>`).join('');
-  box.querySelectorAll('.row').forEach(b => b.addEventListener('click', () => { close('mRoute'); emit('ui:routeto', res[+b.dataset.i]); }));
+  box.innerHTML = res.map((r, i) => `<button class="row" data-i="${i}">${PIN}<div><div class="t">${esc(r.name)}</div><div class="s">${esc(r.sub)}</div></div><span class="star" data-i="${i}" title="Favori">${ICON_STAR}</span></button>`).join('');
+  box.querySelectorAll('.star').forEach(s => s.addEventListener('click', e => { e.stopPropagation(); const p = places(); const r = res[+s.dataset.i]; if (!p.favs.some(f => Math.abs(f.lat - r.lat) < 1e-4 && Math.abs(f.lon - r.lon) < 1e-4)) { p.favs.push(r); savePlaces(p); s.classList.add('on'); toast('Favori ajouté'); renderPlaces(); } }));
+  box.querySelectorAll('.row').forEach(b => b.addEventListener('click', () => pickDest(res[+b.dataset.i])));
 }
 function renderRecents() {
   const list = route.recents();
   $('recentsHead').hidden = !list.length;
   $('routeRecents').innerHTML = list.map((r, i) => `<button class="row" data-i="${i}">${PIN}<div><div class="t">${esc(r.name)}</div><div class="s">${esc(r.sub)}</div></div><div></div></button>`).join('');
-  $('routeRecents').querySelectorAll('.row').forEach(b => b.addEventListener('click', () => { close('mRoute'); emit('ui:routeto', list[+b.dataset.i]); }));
+  $('routeRecents').querySelectorAll('.row').forEach(b => b.addEventListener('click', () => pickDest(list[+b.dataset.i])));
 }
-export function openRoute() {
+let searchMode = null;  // null | 'home' | 'work' | 'fav' | 'via'
+let favsEditing = false;
+const places = () => get('places', { home: null, work: null, favs: [] });
+const savePlaces = p => set('places', p);
+const ICON_HOME = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 11l9-8 9 8M5 10v10h5v-6h4v6h5V10"/></svg>';
+const ICON_WORK = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="7" width="18" height="13" rx="2"/><path d="M8 7V5a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M3 12h18"/></svg>';
+const ICON_STAR = '<svg viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"><path d="M12 3l2.8 5.7 6.2.9-4.5 4.4 1.1 6.2L12 17.3 6.4 20.2l1.1-6.2L3 9.6l6.2-.9z"/></svg>';
+function pickDest(d) {
+  const p = places();
+  if (searchMode === 'home') { p.home = d; savePlaces(p); searchMode = null; toast('Domicile enregistré'); renderPlaces(); $('routeResults').innerHTML = ''; $('routeQ').value = ''; return; }
+  if (searchMode === 'work') { p.work = d; savePlaces(p); searchMode = null; toast('Travail enregistré'); renderPlaces(); $('routeResults').innerHTML = ''; $('routeQ').value = ''; return; }
+  if (searchMode === 'fav') { if (!p.favs.some(f => Math.abs(f.lat - d.lat) < 1e-4 && Math.abs(f.lon - d.lon) < 1e-4)) p.favs.push(d); savePlaces(p); searchMode = null; toast('Favori ajouté'); renderPlaces(); $('routeResults').innerHTML = ''; $('routeQ').value = ''; return; }
+  if (searchMode === 'via') { searchMode = null; close('mRoute'); emit('ui:via', d); return; }
+  close('mRoute'); emit('ui:routeto', d);
+}
+function renderPlaces() {
+  const p = places();
+  $('routeMode').hidden = !searchMode;
+  $('routeMode').textContent = searchMode === 'home' ? 'Choisissez l’adresse de votre domicile' : searchMode === 'work' ? 'Choisissez l’adresse de votre travail' : searchMode === 'fav' ? 'Choisissez un lieu à ajouter aux favoris' : searchMode === 'via' ? 'Choisissez une étape à ajouter au trajet' : '';
+  const cell = (k, icon, label, d) => `<button class="place ${d ? '' : 'unset'}" data-k="${k}"><div class="pl-ic">${icon}</div><div style="min-width:0"><div class="pl-t">${label}</div><div class="pl-s">${d ? esc(d.name) : 'Définir'}</div></div></button>`;
+  $('places').innerHTML = cell('home', ICON_HOME, 'Domicile', p.home) + cell('work', ICON_WORK, 'Travail', p.work);
+  $('places').querySelectorAll('.place').forEach(b => {
+    const k = b.dataset.k;
+    b.addEventListener('click', () => { const d = places()[k]; if (d && !favsEditing) pickDest({ ...d }); else if (d && favsEditing) { const q = places(); q[k] = null; savePlaces(q); renderPlaces(); } else { searchMode = k; renderPlaces(); $('routeQ').focus(); } });
+  });
+  const favs = p.favs || [];
+  $('favsHead').hidden = !favs.length && !favsEditing;
+  $('favsEdit').textContent = favsEditing ? 'Terminé' : 'Modifier';
+  $('routeFavs').innerHTML = favs.map((f, i) => `<button class="row" data-i="${i}"><div class="pin" style="color:var(--warn);background:rgba(245,158,11,.15)">${ICON_STAR}</div><div><div class="t">${esc(f.name)}</div><div class="s">${esc(f.sub || '')}</div></div><div>${favsEditing ? '<span style="color:var(--danger);font-weight:700;font-size:13px">Retirer</span>' : ''}</div></button>`).join('')
+    + `<button class="row" id="favAdd"><div class="pin">${ICON_STAR}</div><div><div class="t">Ajouter un favori</div><div class="s">Rechercher un lieu à enregistrer</div></div><div></div></button>`;
+  $('routeFavs').querySelectorAll('.row[data-i]').forEach(b => b.addEventListener('click', () => { const q = places(); const f = q.favs[+b.dataset.i]; if (favsEditing) { q.favs.splice(+b.dataset.i, 1); savePlaces(q); renderPlaces(); } else pickDest({ ...f }); }));
+  $('favAdd').addEventListener('click', () => { searchMode = 'fav'; renderPlaces(); $('routeQ').focus(); });
+}
+export function openRoute(mode = null) {
+  searchMode = mode; favsEditing = false;
   $('routeQ').value = ''; $('routeResults').innerHTML = '';
-  renderRecents();
+  renderPlaces(); renderRecents();
   open('mRoute');
   setTimeout(() => $('routeQ').focus(), 350);
 }
@@ -383,21 +432,37 @@ function esc(s) { return String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;'
 
 
 // ---------------------------------------------------------------- planification (façon Waze)
-let planDest = null, planRoutes = [], planSel = null, planSeq = 0;
-const planOpts = () => ({ avoidTolls: !!S.avoidTolls, avoidRadars: !!S.avoidRadars });
+let planDest = null, planRoutes = [], planSel = null, planSeq = 0, planVia = [];
+const planOpts = () => ({ avoidTolls: !!S.avoidTolls, avoidRadars: !!S.avoidRadars, via: planVia.slice() });
 const euro = v => (v || 0).toFixed(2).replace('.', ',') + ' €';
 const ICON_TOLL = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="7" width="18" height="12" rx="2"/><path d="M3 11h18"/></svg>';
 const ICON_FUEL = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 21V5a2 2 0 0 1 2-2h6a2 2 0 0 1 2 2v16M4 21h10M14 10h2a2 2 0 0 1 2 2v5a1.5 1.5 0 0 0 3 0V9l-3-3"/></svg>';
 const ICON_CAM = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="7" width="18" height="13" rx="3"/><path d="M8 7l1.5-3h5L16 7"/><circle cx="12" cy="13.5" r="3.5"/></svg>';
 
-export function openPlan(dest) {
-  planDest = dest; planRoutes = []; planSel = null;
+export function openPlan(dest, via = []) {
+  planDest = dest; planRoutes = []; planSel = null; planVia = via.slice();
+  $('planStationsHead').hidden = true; $('planStations').innerHTML = '';
   $('planName').textContent = dest.name; $('planSub').textContent = dest.sub || '';
   $('planOpts').querySelectorAll('.chipbtn').forEach(b => b.classList.toggle('on', !!S[b.dataset.k]));
   $('planGo').disabled = true; $('planNote').textContent = '';
   open('mPlan');
+  renderVia();
   runPlan();
 }
+function renderVia() {
+  const ICON_X = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>';
+  $('planVia').innerHTML = planVia.map((v, i) => `<button class="chipbtn via on" data-i="${i}">${esc(v.name)} ${ICON_X}</button>`).join('') + '<button class="chipbtn add" id="viaAdd">+ Étape</button>';
+  $('planVia').querySelectorAll('.via').forEach(b => b.addEventListener('click', () => { planVia.splice(+b.dataset.i, 1); renderVia(); runPlan(); }));
+  $('viaAdd').addEventListener('click', () => { close('mPlan'); openRoute('via'); });
+}
+/** Ajoute une étape (depuis la recherche ou une station) et recalcule */
+export function addVia(v) {
+  if (!planDest) return false;
+  planVia.push({ name: v.name, sub: v.sub || '', lat: v.lat, lon: v.lon });
+  open('mPlan'); renderVia(); runPlan();
+  return true;
+}
+export function currentPlanDest() { return planDest; }
 async function runPlan() {
   const seq = ++planSeq;
   const from = window.__vigiePos; if (!from) { $('planList').innerHTML = '<div class="empty">Position GPS inconnue, réessayez dans un instant</div>'; return; }
@@ -428,7 +493,37 @@ function renderPlan() {
   const tot = planSel ? planSel.tollCost + planSel.fuelCost : 0;
   $('planNote').textContent = planSel ? `Coût estimé ≈ ${euro(tot)} (carburant ${fuel.price().toFixed(3).replace('.', ',')} €/L, ${fuel.source()} ; péage ≈ ${(S.tollRate ?? 0.11).toFixed(2).replace('.', ',')} €/km).` : '';
   if (planSel) map.showPlan(list, planSel);
+  loadPlanStations(planSel);
 }
+let stationsSeq = 0;
+async function loadPlanStations(r) {
+  const seq = ++stationsSeq;
+  $('planStationsHead').hidden = true; $('planStations').innerHTML = '';
+  if (!r) return;
+  try {
+    const list = await fuel.stationsAlong(r.coords, r.cum);
+    if (seq !== stationsSeq || !list.length) return;
+    $('planStationsHead').hidden = false;
+    $('planStations').innerHTML = list.map((s, i) => stationRow(s, i)).join('');
+    $('planStations').querySelectorAll('.row').forEach(b => b.addEventListener('click', () => { const s = list[+b.dataset.i]; addVia({ name: 'Station ' + (s.city || s.name), sub: s.name, lat: s.lat, lon: s.lon }); toast('Station ajoutée comme étape'); }));
+    r.stations = list;
+  } catch (e) { console.warn('stations', e); }
+}
+const ICON_FUEL_PIN = '<div class="pin fuel"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 21V5a2 2 0 0 1 2-2h6a2 2 0 0 1 2 2v16M4 21h10M14 10h2a2 2 0 0 1 2 2v5a1.5 1.5 0 0 0 3 0V9l-3-3"/></svg></div>';
+function stationRow(s, i) {
+  const det = s.detourMin != null ? (s.detourMin <= 1 ? 'sur la route' : `détour ≈ ${s.detourMin} min`) : '';
+  return `<button class="row" data-i="${i}">${ICON_FUEL_PIN}<div><div class="t">${esc(s.city || s.name)}${s.h24 ? ' · 24/24' : ''}</div><div class="s">${esc(s.name)}${det ? ' · ' + det : ''}</div></div><div class="price num">${s.price.toFixed(3).replace('.', ',')}<small>€/L</small></div></button>`;
+}
+/** Stations dans le tiroir (sur le trajet ou autour) */
+export function setStations(list, onRoute) {
+  $('stationsHead').hidden = !list || !list.length; $('stationsList').hidden = !list || !list.length;
+  if (!list || !list.length) return;
+  $('stationsTitle').textContent = onRoute ? 'Carburant le moins cher sur le trajet' : 'Carburant le moins cher (10 km)';
+  $('stationsList').innerHTML = list.map((s, i) => stationRow(s, i)).join('');
+  $('stationsList').querySelectorAll('.row').forEach(b => b.addEventListener('click', () => { closeSheet(); emit('ui:station', list[+b.dataset.i]); }));
+}
+export function showResume(name) { $('resumeName').textContent = 'vers ' + name; $('resume').classList.add('show'); }
+export function hideResume() { $('resume').classList.remove('show'); }
 
 /** Bandeau de navigation dans le tiroir : { remaining, etaSec, offRoute, rerouting } ou null */
 export function setNav(info) {

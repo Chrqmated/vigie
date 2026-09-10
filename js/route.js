@@ -1,9 +1,9 @@
 // Itinéraire : recherche d'adresse (Photon + Base Adresse Nationale), calcul (Valhalla, secours OSRM),
 // alternatives, évitement péages / radars, coûts (péage, carburant), guidage (manœuvres),
 // projection de la position sur le tracé, radars situés sur le trajet, recalcul si on quitte la route.
-import { distance, bearing, projectToSegment } from './geom.js';
+import { distance, bearing, projectToSegment, angleDiff, destination } from './geom.js';
 import { near } from './radars.js';
-import { get, set, emit, S } from './store.js';
+import { get, set, del, emit, S } from './store.js';
 import * as fuel from './fuel.js';
 
 const ON_ROUTE_M = 35;        // distance max radar ↔ tracé pour être « sur le trajet »
@@ -11,7 +11,7 @@ const OFF_ROUTE_M = 80;       // au-delà : hors itinéraire
 const OFF_ROUTE_MS = 8000;    // pendant N ms avant recalcul
 
 const state = {
-  active: false, dest: null, opts: {}, coords: [], cum: [], total: 0, duration: 0, maneuvers: [], tollKm: 0, tollCost: 0, fuelCost: 0, hasToll: false,
+  active: false, dest: null, via: [], opts: {}, coords: [], cum: [], total: 0, duration: 0, maneuvers: [], tollKm: 0, tollCost: 0, fuelCost: 0, hasToll: false,
   onRoute: [], lastIdx: 0, userS: 0, offSince: 0, rerouting: false, lastReroute: 0, arrived: false, startedAt: 0,
 };
 export const route = state;
@@ -78,8 +78,9 @@ async function fetchJson(url, ms = 15000) {
 
 /** Valhalla : plusieurs itinéraires (principal + alternatives) avec manœuvres et km à péage */
 async function valhalla(from, to, opts = {}) {
+  const via = (opts.via || []).map(v => ({ lat: v.lat, lon: v.lon, type: 'through' }));
   const body = {
-    locations: [{ lat: from.lat, lon: from.lon }, { lat: to.lat, lon: to.lon }],
+    locations: [{ lat: from.lat, lon: from.lon }, ...via, { lat: to.lat, lon: to.lon }],
     costing: 'auto', units: 'kilometers', language: 'fr-FR',
     alternates: opts.alternates ? 2 : 0,
     costing_options: { auto: opts.avoidTolls ? { use_tolls: 0, toll_booth_penalty: 900 } : { use_tolls: 1 } },
@@ -106,8 +107,9 @@ async function valhalla(from, to, opts = {}) {
 }
 
 /** OSRM : secours (un seul itinéraire, sans manœuvres ni péages) */
-async function osrm(from, to) {
-  const j = await fetchJson(`https://router.project-osrm.org/route/v1/driving/${from.lon},${from.lat};${to.lon},${to.lat}?overview=full&geometries=geojson&steps=false`, 12000);
+async function osrm(from, to, opts = {}) {
+  const pts = [from, ...(opts.via || []), to].map(p => `${p.lon},${p.lat}`).join(';');
+  const j = await fetchJson(`https://router.project-osrm.org/route/v1/driving/${pts}?overview=full&geometries=geojson&steps=false`, 12000);
   if (j.code !== 'Ok' || !j.routes?.length) throw new Error(j.message || j.code || 'OSRM');
   const r = j.routes[0];
   const coords = r.geometry.coordinates.map(([lon, lat]) => [lat, lon]);
@@ -139,8 +141,46 @@ function radarsOnRoute(coords, cum) {
   return out;
 }
 
-function enrich(r) {
+// géocodage léger des lieux du champ « sens » (« PARIS VERS LILLE »), avec cache local
+const geoCache = get('geoCache', {});
+async function geocodePlace(name, nearPos) {
+  const k = name.toLowerCase().trim();
+  if (geoCache[k] !== undefined) return geoCache[k];
+  let res = null;
+  try {
+    const j = await fetchJson(`https://photon.komoot.io/api/?q=${encodeURIComponent(name)}&lang=fr&limit=1&lat=${nearPos.lat.toFixed(3)}&lon=${nearPos.lon.toFixed(3)}`, 6000);
+    const f = j.features?.[0];
+    if (f) res = { lat: f.geometry.coordinates[1], lon: f.geometry.coordinates[0] };
+  } catch { res = null; }
+  geoCache[k] = res; set('geoCache', geoCache);
+  return res;
+}
+/** Retire les radars dont le sens de contrôle (« A VERS B ») est opposé au sens du tracé */
+async function dropOpposite(r) {
+  const keep = [];
+  await Promise.all(r.onRoute.map(async x => {
+    const m = /^(.+?)\s+VERS\s+(.+)$/i.exec(x.r.sens || '');
+    x.opposite = false;
+    if (m) {
+      const [a, b] = await Promise.all([geocodePlace(m[1], x.r), geocodePlace(m[2], x.r)]);
+      if (a && b && distance(a.lat, a.lon, b.lat, b.lon) > 2000) {
+        const ctrl = bearing(a.lat, a.lon, b.lat, b.lon);
+        // cap du tracé à l'abscisse du radar
+        let i = 1; while (i < r.cum.length - 1 && r.cum[i] < x.s) i++;
+        const j = Math.min(r.coords.length - 1, i + 3), i0 = Math.max(0, i - 3);
+        const trace = bearing(r.coords[i0][0], r.coords[i0][1], r.coords[j][0], r.coords[j][1]);
+        if (angleDiff(ctrl, trace) > 110) x.opposite = true;
+      }
+    }
+  }));
+  r.oppositeCount = r.onRoute.filter(x => x.opposite).length;
+  r.onRoute = r.onRoute.filter(x => !x.opposite);
+  r.radars = r.onRoute.length;
+}
+
+async function enrich(r) {
   r.onRoute = radarsOnRoute(r.coords, r.cum);
+  if (S.filterOpposite !== false) await dropOpposite(r);
   r.radars = r.onRoute.length;
   r.tollCost = r.tollKm / 1000 * (S.tollRate ?? 0.11);
   const price = fuel.price();
@@ -158,8 +198,8 @@ export async function plan(from, to, opts = {}) {
   await fuel.load().catch(() => {});
   let routes;
   try { routes = await valhalla(from, to, { ...opts, alternates: true }); }
-  catch (e) { console.warn('Valhalla', e); routes = await osrm(from, to); }
-  routes.forEach(enrich);
+  catch (e) { console.warn('Valhalla', e); routes = await osrm(from, to, opts); }
+  await Promise.all(routes.map(enrich));
 
   if (opts.avoidRadars && routes[0].source === 'valhalla') {
     // on exclut les radars du meilleur trajet et on recalcule (2 passes max)
@@ -168,7 +208,8 @@ export async function plan(from, to, opts = {}) {
     for (let pass = 0; pass < 2 && best.radars > 0; pass++) {
       for (const x of best.onRoute) excluded.set(x.r.id, { lat: x.r.lat, lon: x.r.lon });
       try {
-        const alt = (await valhalla(from, to, { ...opts, exclude: [...excluded.values()] })).map(enrich);
+        const alt = await valhalla(from, to, { ...opts, exclude: [...excluded.values()] });
+        await Promise.all(alt.map(enrich));
         const cand = alt.sort((a, b) => a.radars - b.radars || a.duration - b.duration)[0];
         if (cand && (cand.radars < best.radars || (cand.radars === best.radars && cand.duration < best.duration))) { cand.avoidsRadars = true; best = cand; }
         else break;
@@ -197,18 +238,54 @@ function labelFor(r, all) {
 
 export function start(dest, r, opts = {}) {
   Object.assign(state, {
-    active: true, dest, opts, coords: r.coords, cum: r.cum, total: r.total, duration: r.duration, maneuvers: r.maneuvers || [],
+    active: true, dest, via: (opts.via || []).map(v => ({ ...v, passed: false })), opts, coords: r.coords, cum: r.cum, total: r.total, duration: r.duration, maneuvers: r.maneuvers || [],
     tollKm: r.tollKm, tollCost: r.tollCost, fuelCost: r.fuelCost, onRoute: r.onRoute, hasToll: r.hasToll,
     lastIdx: 0, userS: 0, offSince: 0, rerouting: false, arrived: false, startedAt: Date.now(),
   });
   remember(dest);
+  persist();
   emit('route', state);
   return state;
 }
 
 export function stop() {
-  Object.assign(state, { active: false, dest: null, coords: [], cum: [], total: 0, duration: 0, maneuvers: [], onRoute: [], userS: 0, arrived: false, tollCost: 0, fuelCost: 0, hasToll: false });
+  del('savedRoute');
+  Object.assign(state, { active: false, dest: null, via: [], coords: [], cum: [], total: 0, duration: 0, maneuvers: [], onRoute: [], userS: 0, arrived: false, tollCost: 0, fuelCost: 0, hasToll: false });
   emit('route', state);
+}
+
+// ---------------------------------------------------------------- sauvegarde / reprise
+function persist() {
+  try {
+    set('savedRoute', { ts: Date.now(), dest: state.dest, via: state.via, opts: state.opts, coords: state.coords, total: state.total, duration: state.duration, maneuvers: state.maneuvers, tollKm: state.tollKm, tollCost: state.tollCost, fuelCost: state.fuelCost, hasToll: state.hasToll, userS: state.userS });
+  } catch { /* quota */ }
+}
+export function saveProgress() { if (isActive()) persist(); }
+/** Itinéraire sauvegardé récent (moins de 8 h) ou null */
+export function saved() {
+  const s = get('savedRoute', null);
+  if (!s || !s.coords || Date.now() - s.ts > 8 * 3600 * 1000) return null;
+  return s;
+}
+export function resume() {
+  const s = saved(); if (!s) return null;
+  const cum = withCum(s.coords);
+  const r = { coords: s.coords, cum, total: s.total, duration: s.duration, maneuvers: s.maneuvers || [], tollKm: s.tollKm, tollCost: s.tollCost, fuelCost: s.fuelCost, hasToll: s.hasToll, onRoute: radarsOnRoute(s.coords, cum) };
+  start(s.dest, r, { ...s.opts, via: s.via || [] });
+  state.userS = s.userS || 0;
+  return state;
+}
+export function discardSaved() { del('savedRoute'); }
+
+/** Point du tracé à l'abscisse s (estimation de position sans GPS) */
+export function pointAt(s) {
+  const c = state.coords, cum = state.cum; if (c.length < 2) return null;
+  const target = Math.max(0, Math.min(s, state.total));
+  let i = Math.max(1, state.lastIdx); while (i < c.length - 1 && cum[i] < target) i++; while (i > 1 && cum[i - 1] > target) i--;
+  const seg = cum[i] - cum[i - 1]; const t = seg > 0 ? (target - cum[i - 1]) / seg : 0;
+  const brg = bearing(c[i - 1][0], c[i - 1][1], c[i][0], c[i][1]);
+  const p = destination(c[i - 1][0], c[i - 1][1], brg, t * seg);
+  return { lat: p.lat, lon: p.lon, heading: brg };
 }
 
 /** Projection de la position sur le tracé → { s, dist, idx } */
@@ -259,6 +336,8 @@ export function update(fix) {
   const offRoute = p.dist > OFF_ROUTE_M;
   if (offRoute) { if (!state.offSince) state.offSince = now; } else state.offSince = 0;
   const needReroute = offRoute && now - state.offSince > OFF_ROUTE_MS && fix.speed > 2 && !state.rerouting && now - state.lastReroute > 20000;
+  for (const v of state.via) if (!v.passed && distance(fix.lat, fix.lon, v.lat, v.lon) < 120) v.passed = true;
+  if (now - (state.lastPersist || 0) > 15000) { state.lastPersist = now; persist(); }
   const arrived = !state.arrived && (dToDest < 40 || (remaining < 40 && p.dist < OFF_ROUTE_M));
   if (arrived) state.arrived = true;
   const avg = state.total / Math.max(1, state.duration);
@@ -270,10 +349,14 @@ export function update(fix) {
 export async function reroute(fix) {
   state.rerouting = true; state.lastReroute = Date.now();
   try {
-    const rs = await plan({ lat: fix.lat, lon: fix.lon }, state.dest, state.opts);
+    const via = state.via.filter(v => !v.passed);
+    const rs = await plan({ lat: fix.lat, lon: fix.lon }, state.dest, { ...state.opts, via });
+    state.via = via;
     const r = rs[0];
     Object.assign(state, { coords: r.coords, cum: r.cum, total: r.total, duration: r.duration, maneuvers: r.maneuvers || [], tollKm: r.tollKm, tollCost: r.tollCost, fuelCost: r.fuelCost, onRoute: r.onRoute, hasToll: r.hasToll, lastIdx: 0, userS: 0, offSince: 0 });
     emit('route', state);
+    return true;
+    persist();
     return true;
   } catch (e) { console.warn('reroute', e); return false; }
   finally { state.rerouting = false; }

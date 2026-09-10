@@ -36,6 +36,12 @@
     </div>
   </div>
 
+  <!-- reprise d'itinéraire -->
+  <div class="resume" id="resume">
+    <div class="rs-txt"><div class="rs-t">Reprendre l'itinéraire ?</div><div class="rs-s" id="resumeName">vers Arras</div></div>
+    <button class="rs-no" id="resumeNo">Non</button><button class="rs-yes" id="resumeYes">Reprendre</button>
+  </div>
+
   <!-- guidage : prochaine manœuvre -->
   <div class="turn" id="turn">
     <div class="turn-icon" id="turnIcon"></div>
@@ -72,6 +78,7 @@
       <div class="ns-eta"><div class="v num" id="nsEta">18:42</div><div class="k">arrivée</div></div>
       <div class="ns-mid"><div class="v num" id="nsDur">35 min</div><div class="k num" id="nsKm">72 km</div></div>
       <div class="ns-cost"><div class="v num" id="nsCost">≈ 12 €</div><div class="k" id="nsCostSub">péage + SP98</div></div>
+      <button class="ns-close" id="nsShare" aria-label="Partager l'heure d'arrivée"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12v7a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-7M16 6l-4-4-4 4M12 2v13"/></svg></button>
       <button class="ns-close" id="nsStop" aria-label="Arrêter l'itinéraire"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
     </div>
     <div class="peek" id="peek">
@@ -86,8 +93,16 @@
         <div class="stat"><div class="v num" id="stOdo">0</div><div class="k">Total km</div></div>
         <div class="stat"><div class="v num" id="stRadars">0</div><div class="k">Radars</div></div>
       </div>
+      <div class="grid4" style="margin-top:10px">
+        <div class="stat"><div class="v num" id="stOver">–</div><div class="k">% en excès</div></div>
+        <div class="stat"><div class="v num" id="stRadPass">0</div><div class="k">Radars passés</div></div>
+        <div class="stat"><div class="v num" id="stRadOver">0</div><div class="k">En excès</div></div>
+        <div class="stat"><div class="v num" id="stFuel">0 €</div><div class="k">Carburant</div></div>
+      </div>
       <div class="h"><h3 id="nextTitle">Prochains radars</h3><button id="btnNewTrip">Nouveau trajet</button></div>
       <div class="list" id="nextList"><div class="empty">En attente de position…</div></div>
+      <div class="h" id="stationsHead" hidden><h3 id="stationsTitle">Carburant le moins cher</h3><button id="stationsRefresh">Actualiser</button></div>
+      <div class="list" id="stationsList" hidden></div>
       <div class="actions">
         <button class="action" id="actReport"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>Signaler</button>
         <button class="action" id="actHistory"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>Trajets</button>
@@ -153,7 +168,11 @@
       <div class="head"><h2>Itinéraire</h2><button class="close" data-close><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button></div>
       <div class="content">
         <div class="search"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg><input type="search" id="routeQ" placeholder="Adresse, ville, lieu…" autocomplete="off" autocorrect="off" spellcheck="false" enterkeyhint="search"></div>
+        <p class="note" id="routeMode" hidden></p>
+        <div class="places" id="places"></div>
         <div class="list" id="routeResults"></div>
+        <div class="h" id="favsHead" hidden><h3>Favoris</h3><button id="favsEdit">Modifier</button></div>
+        <div class="list" id="routeFavs"></div>
         <div class="h" id="recentsHead"><h3>Récents</h3><button id="recentsClear">Effacer</button></div>
         <div class="list" id="routeRecents"></div>
         <p class="note">Avec un itinéraire actif, seuls les radars <b>situés sur votre trajet</b> déclenchent une alerte, avec la distance réelle par la route. Recalcul automatique si vous quittez l'itinéraire. Calcul par OSRM / OpenStreetMap.</p>
@@ -170,8 +189,11 @@
           <button class="chipbtn" data-k="avoidTolls">Éviter les péages</button>
           <button class="chipbtn" data-k="avoidRadars">Éviter les radars</button>
         </div>
+        <div class="chips" id="planVia" style="margin-top:10px"></div>
         <div class="list" id="planList"><div class="row loading">Calcul des itinéraires…</div></div>
         <p class="note" id="planNote"></p>
+        <div class="h" id="planStationsHead" hidden><h3>Carburant le moins cher sur le trajet</h3><span></span></div>
+        <div class="list" id="planStations"></div>
         <button class="btn" id="planGo" disabled>Démarrer</button>
       </div>
     </div>

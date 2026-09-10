@@ -263,3 +263,16 @@ function camera(g, cx, cy, color) {
 }
 
 export { radars };
+
+// ---------------------------------------------------------------- stations carburant
+let stationMarkers = [];
+export function setStations(list) {
+  stationMarkers.forEach(mk => mk.remove()); stationMarkers = [];
+  if (!map || !list) return;
+  for (const st of list) {
+    const el = document.createElement('div'); el.className = 'station-marker';
+    el.innerHTML = `<div class="sm-price">${st.price.toFixed(2).replace('.', ',')} €</div><div class="sm-dot"></div>`;
+    el.addEventListener('click', () => emit('ui:station', st));
+    stationMarkers.push(new maplibregl.Marker({ element: el, anchor: 'bottom' }).setLngLat([st.lon, st.lat]).addTo(map));
+  }
+}

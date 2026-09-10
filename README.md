@@ -22,7 +22,12 @@ Conseils : gardez l'app au premier plan, écran allumé (elle s'en charge). Le b
 - Radars tronçon : annonce de la longueur, **vitesse moyenne en direct**, fin de tronçon.
 - Signalement : radar mobile (expire automatiquement), fixe absent, feu rouge, danger ; appui long sur la carte pour placer ; export / import JSON.
 - **Itinéraire façon Waze** : recherche d'adresse ou de lieu (Photon + Base Adresse Nationale), jusqu'à 3 propositions (le plus rapide, alternative, moins de radars) avec durée, heure d'arrivée, **coût du péage** (estimation ≈ 0,11 €/km d'autoroute, réglable) et **coût du carburant** (prix moyen national en direct, SP98 par défaut, consommation réglable), nombre de radars sur le trajet. Options « Éviter les péages » et « Éviter les radars » (recalcul en excluant les radars du trajet). Guidage visuel des manœuvres (vocal en option), bandeau arrivée / durée / km / coût, recalcul automatique hors route. Avec un itinéraire actif, **seuls les radars situés sur le trajet** déclenchent une alerte, avec la distance réelle par la route. Calcul par Valhalla (secours OSRM).
-- Mise à jour de la base radars depuis data.gouv.fr directement dans l'app.
+- **Domicile, Travail, favoris** et récents dans la recherche ; **étapes intermédiaires** (« + Étape ») ; **stations les moins chères** sur le trajet (prix en direct, détour estimé, ajout en étape d'un tap) ou autour de vous.
+- **Reprise d'itinéraire** après fermeture de l'app (sauvegarde locale, proposition au démarrage), **partage de l'heure d'arrivée** (SMS, WhatsApp…), radars à contresens écartés grâce au champ « sens » de la base 2018.
+- **Annonce vocale des limitations** (« Limité à 50 ») à chaque changement de zone, en plus des alertes radars.
+- **GPS perdu** (tunnel, parking) : position estimée le long du trajet pendant 90 s au lieu d'un compteur figé.
+- **Bilan de conduite** : % du temps en excès, radars passés et en excès, carburant consommé en euros ; historique des trajets avec **export GPX**.
+- Mise à jour de la base radars depuis data.gouv.fr directement dans l'app, vérification automatique mensuelle.
 - Mode simulation pour tester voix et alertes sans rouler.
 - Fonctionne hors connexion (hors tuiles non encore vues).
 

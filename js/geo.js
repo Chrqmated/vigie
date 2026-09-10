@@ -1,5 +1,5 @@
 // Géolocalisation : watchPosition, filtrage, lissage vitesse, cap (GPS → déplacement → boussole)
-import { distance, bearing, blendHeading } from './geom.js';
+import { distance, bearing, blendHeading, destination } from './geom.js';
 import { emit } from './store.js';
 
 const state = {
@@ -13,10 +13,33 @@ const state = {
   quality: 'none',     // none | bad | weak | ok
   error: null,
   simulated: false,
+  lost: false,         // signal GPS perdu (tunnel, parking)
+  lastWall: 0,
 };
 export const geo = state;
 
 let compassListening = false;
+let estimator = null;   // fn(distance parcourue estimée) → { lat, lon, heading } (ex. : le long de l'itinéraire)
+export function setEstimator(fn) { estimator = fn; }
+let lostTimer = 0, lostSince = 0, estDist = 0;
+
+// chien de garde : sans fix pendant 4 s en roulant → estimation (vitesse qui décroît lentement) pendant 90 s max
+function watchdog() {
+  if (!state.watching || state.simulated || !state.last) return;
+  const now = Date.now();
+  if (now - state.lastWall < 4000) { if (state.lost) { state.lost = false; estDist = 0; emit('geo:recovered'); } return; }
+  if (!state.lost) { if (state.speed < 2) return; state.lost = true; lostSince = now; estDist = 0; emit('geo:lost'); }
+  if (now - lostSince > 90000) { state.speed = 0; return; }
+  const dt = 1;
+  state.speed *= 0.985;
+  const d = state.speed * dt; estDist += d;
+  let p = estimator ? estimator(estDist) : null;
+  if (!p) { const q = destination(state.last.lat, state.last.lon, state.heading ?? 0, d); p = { lat: q.lat, lon: q.lon, heading: state.heading }; }
+  if (p.heading != null) state.heading = p.heading;
+  const fix = { lat: p.lat, lon: p.lon, acc: 60, ts: state.last.ts + dt * 1000, speed: state.speed, heading: state.heading, moved: d, dt, quality: 'weak', sim: false, estimated: true };
+  state.last = fix;
+  emit('fix', fix);
+}
 
 export function start() {
   if (state.watching || !('geolocation' in navigator)) {
@@ -28,6 +51,7 @@ export function start() {
     enableHighAccuracy: true, maximumAge: 0, timeout: 20000,
   });
   startCompass();
+  if (!lostTimer) lostTimer = setInterval(watchdog, 1000);
 }
 
 export function stop() {
@@ -77,6 +101,7 @@ function onPosition(pos) {
 /** Injection d'un fix (GPS réel ou simulation) */
 export function ingest(raw) {
   state.error = null;
+  if (!raw.estimated) state.lastWall = Date.now();
   state.lastRaw = raw;
   const acc = raw.acc ?? 999;
   state.quality = acc <= 25 ? 'ok' : acc <= 80 ? 'weak' : 'bad';
