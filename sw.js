@@ -1,9 +1,9 @@
 // Service worker Vigie : app en cache (hors-ligne), tuiles en cache opportuniste
-const VERSION = 'vigie-v3';
+const VERSION = 'vigie-v4';
 const SHELL = [
   './', './index.html', './css/app.css', './manifest.webmanifest',
   './js/app.js', './js/alerts.js', './js/audio.js', './js/custom.js', './js/geo.js', './js/geom.js', './js/map.js',
-  './js/osm.js', './js/radars.js', './js/route.js', './js/sim.js', './js/store.js', './js/trip.js', './js/ui.js',
+  './js/osm.js', './js/radars.js', './js/route.js', './js/fuel.js', './js/sim.js', './js/store.js', './js/trip.js', './js/ui.js',
   './vendor/maplibre-gl.js', './vendor/maplibre-gl.css', './data/radars.json',
   './icons/icon.svg', './icons/apple-touch-icon.png', './icons/icon-192.png', './icons/icon-512.png',
 ];

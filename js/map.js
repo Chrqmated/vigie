@@ -71,7 +71,10 @@ export function getMap() { return map; }
 
 function addLayers() {
   if (!map.style || map.getSource('radars')) return;
-  map.addSource('route', { type: 'geojson', data: route.geojson() });
+  map.addSource('route-alt', { type: 'geojson', data: altData });
+  map.addLayer({ id: 'route-alt-casing', type: 'line', source: 'route-alt', layout: { 'line-join': 'round', 'line-cap': 'round' }, paint: { 'line-color': '#ffffff', 'line-width': ['interpolate', ['linear'], ['zoom'], 8, 5, 14, 10, 18, 16], 'line-opacity': 0.8 } });
+  map.addLayer({ id: 'route-alt', type: 'line', source: 'route-alt', layout: { 'line-join': 'round', 'line-cap': 'round' }, paint: { 'line-color': '#94a3b8', 'line-width': ['interpolate', ['linear'], ['zoom'], 8, 3, 14, 6, 18, 11] } });
+  map.addSource('route', { type: 'geojson', data: routeData });
   map.addLayer({ id: 'route-casing', type: 'line', source: 'route', layout: { 'line-join': 'round', 'line-cap': 'round' }, paint: { 'line-color': '#ffffff', 'line-width': ['interpolate', ['linear'], ['zoom'], 8, 5, 14, 11, 18, 18], 'line-opacity': 0.9 } });
   map.addLayer({ id: 'route-line', type: 'line', source: 'route', layout: { 'line-join': 'round', 'line-cap': 'round' }, paint: { 'line-color': '#2f7cf6', 'line-width': ['interpolate', ['linear'], ['zoom'], 8, 3, 14, 7, 18, 12] } });
   map.addSource('radars', { type: 'geojson', data: geojson(), cluster: true, clusterMaxZoom: 10, clusterRadius: 46 });
@@ -97,10 +100,22 @@ export function refreshRadars() {
   else if (!pendingRefresh) { pendingRefresh = true; map.once('load', () => { pendingRefresh = false; refreshRadars(); }); }
 }
 
+let routeData = { type: 'FeatureCollection', features: [] };
+let altData = { type: 'FeatureCollection', features: [] };
+function setSrc(id, data) { let src = null; try { src = map && map.getSource(id); } catch { src = null; } if (src) src.setData(data); }
+/** Aperçu de planification : `selected` en bleu, les autres en gris */
+export function showPlan(list, selected) {
+  routeData = route.geojson(selected);
+  altData = route.geojsonMany(list.filter(r => r !== selected));
+  setSrc('route', routeData); setSrc('route-alt', altData);
+  setFollow(false);
+  const h = map.getContainer().clientHeight;
+  map.setPadding({ top: 0, bottom: 0, left: 0, right: 0 }); // sinon le padding de navigation s'ajoute et fitBounds échoue
+  map.fitBounds(route.bounds(selected), { padding: { top: 90, bottom: Math.round(h * 0.52), left: 36, right: 36 }, pitch: 0, bearing: 0, duration: 700, maxZoom: 15 });
+}
 export function refreshRoute() {
-  let src = null;
-  try { src = map && map.getSource('route'); } catch { src = null; }
-  if (src) src.setData(route.geojson());
+  routeData = route.geojson(); altData = { type: 'FeatureCollection', features: [] };
+  setSrc('route', routeData); setSrc('route-alt', altData);
   const d = route.route.dest;
   if (d && route.isActive()) {
     if (!destMarker) {
@@ -116,7 +131,8 @@ export function refreshRoute() {
 export function fitRoute() {
   if (!map || !route.isActive()) return;
   setFollow(false);
-  map.fitBounds(route.bounds(), { padding: { top: 120, bottom: 200, left: 40, right: 40 }, pitch: 0, bearing: 0, duration: 900, maxZoom: 15 });
+  map.setPadding({ top: 0, bottom: 0, left: 0, right: 0 });
+  map.fitBounds(route.bounds(), { padding: { top: 110, bottom: 220, left: 40, right: 40 }, pitch: 0, bearing: 0, duration: 900, maxZoom: 15 });
 }
 
 export function setStyle(theme) {
@@ -135,7 +151,7 @@ export function isFollowing() { return follow; }
 
 function zoomForSpeed(kmh) {
   if (!S.autoZoom) return Math.max(map.getZoom(), 14);
-  return 17 - Math.min(kmh, 130) / 62;
+  return 18 - Math.min(kmh, 130) / 72;
 }
 
 export function onFix(fix) {
@@ -160,9 +176,9 @@ function cameraTo(fix, instant) {
     center: [fix.lon, fix.lat],
     zoom: zoomForSpeed(kmh),
     bearing: fix.heading != null ? fix.heading : map.getBearing(),
-    pitch: S.pitch && kmh > 8 ? 50 : (S.pitch ? 30 : 0),
-    padding: { top: Math.round(h * 0.50), bottom: Math.round(h * 0.16), left: 0, right: 0 },
-    duration: instant || firstCamera ? 700 : 1000,
+    pitch: S.pitch && kmh > 8 ? 60 : (S.pitch ? 35 : 0),
+    padding: { top: Math.round(h * 0.56), bottom: Math.round(h * 0.14), left: 0, right: 0 },
+    duration: instant || firstCamera ? 700 : Math.max(600, Math.min(1200, (fix.dt || 1) * 1000)),
     easing: t => t,
     essential: true,
   };

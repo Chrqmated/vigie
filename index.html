@@ -36,6 +36,12 @@
     </div>
   </div>
 
+  <!-- guidage : prochaine manœuvre -->
+  <div class="turn" id="turn">
+    <div class="turn-icon" id="turnIcon"></div>
+    <div class="turn-txt"><div class="turn-dist num" id="turnDist">300 m</div><div class="turn-ins" id="turnIns">Tournez à droite</div></div>
+  </div>
+
   <!-- bandeau simulation -->
   <div class="simbar" id="simbar"><span>Simulation en cours</span><button id="simStop">Arrêter</button></div>
 
@@ -62,6 +68,12 @@
   <!-- tiroir bas -->
   <div class="sheet" id="sheet">
     <div class="handle"></div>
+    <div class="navstrip" id="navstrip">
+      <div class="ns-eta"><div class="v num" id="nsEta">18:42</div><div class="k">arrivée</div></div>
+      <div class="ns-mid"><div class="v num" id="nsDur">35 min</div><div class="k num" id="nsKm">72 km</div></div>
+      <div class="ns-cost"><div class="v num" id="nsCost">≈ 12 €</div><div class="k" id="nsCostSub">péage + SP98</div></div>
+      <button class="ns-close" id="nsStop" aria-label="Arrêter l'itinéraire"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+    </div>
     <div class="peek" id="peek">
       <div class="speed" id="speedBox"><div class="v num" id="speedV">0</div><div class="u">km/h</div></div>
       <div class="limit"><div class="sign unknown" id="limitSign">–</div><div class="src" id="limitSrc">limite</div></div>
@@ -84,13 +96,6 @@
       </div>
       <div class="brand" id="brand">Vigie · base radars data.gouv.fr</div>
     </div>
-  </div>
-
-  <!-- bandeau itinéraire -->
-  <div class="routebar" id="routebar">
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 21V4h12l-1 4 1 4H4"/></svg>
-    <div class="rb"><div class="rb-main num" id="rbMain">—</div><div class="rb-sub" id="rbSub">—</div></div>
-    <button class="rb-close" id="rbStop" aria-label="Arrêter l'itinéraire"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
   </div>
 
   <!-- boutons flottants -->
@@ -152,6 +157,22 @@
         <div class="h" id="recentsHead"><h3>Récents</h3><button id="recentsClear">Effacer</button></div>
         <div class="list" id="routeRecents"></div>
         <p class="note">Avec un itinéraire actif, seuls les radars <b>situés sur votre trajet</b> déclenchent une alerte, avec la distance réelle par la route. Recalcul automatique si vous quittez l'itinéraire. Calcul par OSRM / OpenStreetMap.</p>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal plan" id="mPlan">
+    <div class="scrim" data-close></div>
+    <div class="panel">
+      <div class="head"><div><h2 id="planName">Destination</h2><div class="plan-sub" id="planSub"></div></div><button class="close" data-close><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button></div>
+      <div class="content">
+        <div class="chips" id="planOpts">
+          <button class="chipbtn" data-k="avoidTolls">Éviter les péages</button>
+          <button class="chipbtn" data-k="avoidRadars">Éviter les radars</button>
+        </div>
+        <div class="list" id="planList"><div class="row loading">Calcul des itinéraires…</div></div>
+        <p class="note" id="planNote"></p>
+        <button class="btn" id="planGo" disabled>Démarrer</button>
       </div>
     </div>
   </div>

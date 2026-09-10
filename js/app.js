@@ -11,7 +11,7 @@ import * as map from './map.js';
 import * as ui from './ui.js';
 import * as sim from './sim.js';
 import * as route from './route.js';
-import { fmtKm, fmtDuration } from './geom.js';
+import { blendHeading } from './geom.js';
 import { createEngine } from './alerts.js';
 
 const engine = createEngine(S, handleEngineEvent);
@@ -72,22 +72,25 @@ on('ui:audio', () => audio.unlock());
 
 // ---------------------------------------------------------------- position
 on('fix', fix => {
-  map.onFix(fix);
   const kmh = fix.speed * 3.6;
   ui.setSpeed(kmh);
   ui.setGps(fix.quality, fix.quality === 'ok' ? 'GPS' : fix.quality === 'weak' ? `GPS ±${Math.round(fix.acc)} m` : 'GPS faible');
 
   window.__vigiePos = { lat: fix.lat, lon: fix.lon };
 
-  // itinéraire : projection, hors-route, arrivée
+  // itinéraire : projection, hors-route, arrivée, guidage
   let nav = null;
   if (route.isActive()) {
     nav = route.update(fix);
-    ui.setRoute({ ...nav, name: route.route.dest.name, rerouting: route.route.rerouting });
+    if (nav.routeBearing != null && fix.speed > 2) fix.heading = blendHeading(nav.routeBearing, fix.heading ?? nav.routeBearing, 0.25); // caméra alignée sur la route
+    ui.setNav({ ...nav, rerouting: route.route.rerouting });
+    ui.setTurn(nav.maneuver);
+    if (nav.maneuver) announceTurn(nav.maneuver, fix);
     if (nav.arrived) { onArrived(); nav = null; }
     else if (nav.needReroute && !fix.sim) doReroute(fix);
   }
   const useRoute = nav && S.routeOnly && !nav.offRoute;
+  map.onFix(fix);
 
   const cands = useRoute ? route.candidates(fix) : radars.near(fix.lat, fix.lon, 2500);
   engine.update(fix, cands);
@@ -106,33 +109,36 @@ on('fix', fix => {
 
 // ---------------------------------------------------------------- itinéraire
 on('route', () => map.refreshRoute());
-on('ui:routeto', async dest => {
+on('ui:routeto', dest => {
+  if (!geo.geo.last) { ui.toast('Position GPS inconnue, réessayez dans un instant'); return; }
+  ui.openPlan(dest);            // planification façon Waze : choix du trajet, coûts, radars
+});
+on('ui:routestart', ({ dest, route: r, opts }) => {
+  route.start(dest, r, opts);
+  engine.reset(); activeId = null; ui.hideAlert(); lastTurn = '';
   const f = geo.geo.last;
-  if (!f) { ui.toast('Position GPS inconnue, réessayez dans un instant'); return; }
-  ui.toast('Calcul de l’itinéraire…', 8000);
-  try {
-    const r = await route.start(dest, { lat: f.lat, lon: f.lon });
-    engine.reset(); activeId = null; ui.hideAlert();
-    const n = r.onRoute.length;
-    ui.toast(`${fmtKm(r.total, 0)} km · ${fmtDuration(r.duration * 1000)} · ${n} radar${n > 1 ? 's' : ''} sur le trajet`, 5000);
-    audio.chime();
-    audio.speak(`Itinéraire calculé : ${Math.round(r.total / 1000)} kilomètres, ${fmtDuration(r.duration * 1000).replace('h', ' heures ')}. ${n ? n + ' radar' + (n > 1 ? 's' : '') + ' sur le trajet.' : 'Aucun radar sur le trajet.'}`, { priority: true });
-    ui.setRoute({ remaining: r.total, etaSec: r.duration, offRoute: false, name: dest.name });
-    route.update(f); ui.setNext(route.nextOnRoute(3)); ui.setNextTitle(true);
-    map.fitRoute();
-    setTimeout(() => { if (route.isActive()) map.setFollow(true); }, 4500);
-  } catch (e) { console.warn(e); ui.toast('Itinéraire introuvable (' + (e.message || 'réseau') + ')', 4000); }
+  if (f) { const nav = route.update(f); ui.setNav(nav); ui.setTurn(nav.maneuver); }
+  ui.setNext(route.nextOnRoute(3)); ui.setNextTitle(true);
+  map.refreshRoute();
+  map.setFollow(true);
+  audio.chime();                // pas d'annonce vocale au départ
 });
 on('ui:routestop', () => { stopRoute(); ui.toast('Itinéraire arrêté'); });
-function stopRoute() { route.stop(); ui.setRoute(null); ui.setNextTitle(false); engine.reset(); activeId = null; ui.hideAlert(); }
-function onArrived() { audio.ok(); audio.speak('Vous êtes arrivé à destination', { priority: true }); stopRoute(); ui.toast('Arrivé à destination'); }
+function stopRoute() { route.stop(); ui.setNav(null); ui.setTurn(null); ui.setNextTitle(false); engine.reset(); activeId = null; ui.hideAlert(); map.refreshRoute(); }
+function onArrived() { audio.ok(); if (S.turnVoice) audio.speak('Vous êtes arrivé à destination', { priority: true }); stopRoute(); ui.toast('Arrivé à destination', 4000); }
 async function doReroute(fix) {
-  audio.speak('Recalcul de l’itinéraire');
+  if (S.turnVoice) audio.speak('Recalcul de l’itinéraire');
   const ok = await route.reroute(fix);
-  if (ok) { engine.reset(); activeId = null; ui.hideAlert(); const n = route.route.onRoute.length; ui.toast(`Nouvel itinéraire · ${n} radar${n > 1 ? 's' : ''}`); }
+  if (ok) { engine.reset(); activeId = null; ui.hideAlert(); lastTurn = ''; const n = route.route.onRoute.length; ui.toast(`Nouvel itinéraire · ${n} radar${n > 1 ? 's' : ''} sur le trajet`); }
 }
-on('geo:error', msg => { ui.setGps('bad', 'GPS indisponible'); ui.toast(msg, 5000); });
-osm.onLimit(l => { engine.setOsmLimit(l); });
+// guidage vocal optionnel : une annonce par manœuvre, ~12 s avant (mini 120 m)
+let lastTurn = '';
+function announceTurn(t, fix) {
+  if (!S.turnVoice) return;
+  const key = t.index + ':' + t.m.type;
+  const lead = Math.max(120, fix.speed * 12);
+  if (t.dist <= lead && lastTurn !== key) { lastTurn = key; audio.speak(t.m.verbal || t.m.instruction); }
+}
 
 // ---------------------------------------------------------------- événements moteur
 function level(r, speedKmh) {

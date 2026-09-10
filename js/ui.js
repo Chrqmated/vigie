@@ -6,6 +6,7 @@ import * as trip from './trip.js';
 import * as custom from './custom.js';
 import * as map from './map.js';
 import * as route from './route.js';
+import * as fuel from './fuel.js';
 
 const $ = id => document.getElementById(id);
 const el = {};
@@ -50,8 +51,11 @@ export function init() {
   $('btnNewTrip').addEventListener('click', () => { trip.newTrip(); toast('Nouveau trajet démarré'); });
   el.simStop.addEventListener('click', () => emit('ui:simstop'));
   $('btnRoute').addEventListener('click', openRoute);
-  $('rbStop').addEventListener('click', () => emit('ui:routestop'));
-  $('routebar').addEventListener('click', e => { if (!e.target.closest('#rbStop')) map.fitRoute(); });
+  $('nsStop').addEventListener('click', () => emit('ui:routestop'));
+  $('navstrip').addEventListener('click', e => { if (!e.target.closest('#nsStop')) map.fitRoute(); });
+  $('planGo').addEventListener('click', () => { if (planSel) { close('mPlan'); emit('ui:routestart', { dest: planDest, route: planSel, opts: planOpts() }); } });
+  $('planOpts').querySelectorAll('.chipbtn').forEach(b => b.addEventListener('click', () => { setSetting(b.dataset.k, !S[b.dataset.k]); b.classList.toggle('on', S[b.dataset.k]); runPlan(); }));
+  $('mPlan').querySelectorAll('[data-close]').forEach(b => b.addEventListener('click', () => { planSeq++; if (!route.isActive()) map.refreshRoute(); }));
   initRouteSearch();
   el.alert.addEventListener('click', () => { const a = el.alert.dataset.id; if (a) openDetail(radars.byId.get(a)); });
 
@@ -301,6 +305,12 @@ const SCHEMA = [
   ['autoZoom', 'toggle', 'Zoom automatique', 'Dézoome quand la vitesse augmente'],
   ['osmLimits', 'toggle', 'Limites de vitesse OpenStreetMap', 'Affiche la limite de la route hors radar (couverture partielle)'],
   ['keepAwake', 'toggle', 'Écran toujours allumé', 'Nécessaire pour les alertes : iOS coupe le GPS écran éteint'],
+  ['Itinéraire'],
+  ['turnVoice', 'toggle', 'Guidage vocal des manœuvres', 'Annonce les changements de direction (sinon guidage visuel seulement)'],
+  ['fuelType', 'select', 'Carburant', 'Prix moyen national en direct (data.economie.gouv.fr)', [['sp98', 'SP98'], ['sp95', 'SP95'], ['e10', 'SP95-E10'], ['gazole', 'Gazole'], ['e85', 'E85']]],
+  ['consumption', 'number', 'Consommation (L/100 km)', '', { min: 2, max: 25, step: 0.5 }],
+  ['fuelPrice', 'number', 'Prix du carburant (€/L)', '0 = prix moyen national automatique', { min: 0, max: 5, step: 0.01 }],
+  ['tollRate', 'number', 'Péage (€/km d’autoroute)', 'Estimation : ≈ 0,11 €/km en moyenne pour une voiture', { min: 0, max: 1, step: 0.01 }],
   ['Signalements'],
   ['mobileTtlHours', 'number', 'Durée radars mobiles (h)', 'Expiration automatique des radars mobiles signalés', { min: 1, max: 48, step: 1 }],
 ];
@@ -371,14 +381,105 @@ export function openRoute() {
 }
 function esc(s) { return String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
 
-/** Bandeau de navigation : { remaining, etaSec, offRoute, name } ou null */
-export function setRoute(info) {
-  const bar = $('routebar');
-  if (!info) { bar.classList.remove('show'); return; }
-  bar.classList.add('show'); bar.classList.toggle('off', !!info.offRoute);
-  if (info.offRoute) { $('rbMain').textContent = info.rerouting ? 'Recalcul…' : 'Hors itinéraire'; $('rbSub').textContent = info.name; return; }
-  const km = fmtKm(info.remaining, info.remaining < 10000 ? 1 : 0);
-  const eta = new Date(Date.now() + info.etaSec * 1000).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
-  $('rbMain').textContent = `${km} km · ${fmtDuration(info.etaSec * 1000)}`;
-  $('rbSub').textContent = `Arrivée ${eta} · ${info.name}`;
+
+// ---------------------------------------------------------------- planification (façon Waze)
+let planDest = null, planRoutes = [], planSel = null, planSeq = 0;
+const planOpts = () => ({ avoidTolls: !!S.avoidTolls, avoidRadars: !!S.avoidRadars });
+const euro = v => (v || 0).toFixed(2).replace('.', ',') + ' €';
+const ICON_TOLL = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="7" width="18" height="12" rx="2"/><path d="M3 11h18"/></svg>';
+const ICON_FUEL = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 21V5a2 2 0 0 1 2-2h6a2 2 0 0 1 2 2v16M4 21h10M14 10h2a2 2 0 0 1 2 2v5a1.5 1.5 0 0 0 3 0V9l-3-3"/></svg>';
+const ICON_CAM = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="7" width="18" height="13" rx="3"/><path d="M8 7l1.5-3h5L16 7"/><circle cx="12" cy="13.5" r="3.5"/></svg>';
+
+export function openPlan(dest) {
+  planDest = dest; planRoutes = []; planSel = null;
+  $('planName').textContent = dest.name; $('planSub').textContent = dest.sub || '';
+  $('planOpts').querySelectorAll('.chipbtn').forEach(b => b.classList.toggle('on', !!S[b.dataset.k]));
+  $('planGo').disabled = true; $('planNote').textContent = '';
+  open('mPlan');
+  runPlan();
+}
+async function runPlan() {
+  const seq = ++planSeq;
+  const from = window.__vigiePos; if (!from) { $('planList').innerHTML = '<div class="empty">Position GPS inconnue, réessayez dans un instant</div>'; return; }
+  $('planList').innerHTML = '<div class="row loading">Calcul des itinéraires…</div>'; $('planGo').disabled = true;
+  try {
+    const list = await route.plan(from, planDest, planOpts());
+    if (seq !== planSeq) return;
+    planRoutes = list; planSel = list[0];
+    renderPlan();
+  } catch (e) { if (seq === planSeq) $('planList').innerHTML = `<div class="empty">Itinéraire introuvable (${esc(e.message || 'réseau')})</div>`; }
+}
+function renderPlan() {
+  const list = planRoutes;
+  $('planList').innerHTML = list.map(r => {
+    const eta = new Date(Date.now() + r.duration * 1000).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
+    const tags = [];
+    tags.push(r.hasToll ? `<span class="tag warn">${ICON_TOLL}≈ ${euro(r.tollCost)} péage</span>` : `<span class="tag good">${ICON_TOLL}Sans péage</span>`);
+    tags.push(`<span class="tag">${ICON_FUEL}≈ ${euro(r.fuelCost)} ${fuel.FUELS[S.fuelType] || 'carburant'}</span>`);
+    tags.push(r.radars ? `<span class="tag ${r.radars > 3 ? 'bad' : 'warn'}">${ICON_CAM}${r.radars} radar${r.radars > 1 ? 's' : ''}</span>` : `<span class="tag good">${ICON_CAM}0 radar</span>`);
+    return `<button class="plan-card ${r === planSel ? 'on' : ''}" data-id="${r.id}">
+      <div><div class="pc-label">${esc(r.label)}</div><div class="pc-time">${fmtDuration(r.duration * 1000)}<small>${fmtKm(r.total, 0)} km</small></div></div>
+      <div class="pc-eta">${eta}<small>arrivée</small></div>
+      <div class="pc-tags">${tags.join('')}</div></button>`;
+  }).join('');
+  $('planList').querySelectorAll('.plan-card').forEach(b => b.addEventListener('click', () => { planSel = list[+b.dataset.id]; renderPlan(); }));
+  $('planGo').disabled = !planSel;
+  $('planGo').textContent = planSel ? `Démarrer · ${fmtDuration(planSel.duration * 1000)}` : 'Démarrer';
+  const tot = planSel ? planSel.tollCost + planSel.fuelCost : 0;
+  $('planNote').textContent = planSel ? `Coût estimé ≈ ${euro(tot)} (carburant ${fuel.price().toFixed(3).replace('.', ',')} €/L, ${fuel.source()} ; péage ≈ ${(S.tollRate ?? 0.11).toFixed(2).replace('.', ',')} €/km).` : '';
+  if (planSel) map.showPlan(list, planSel);
+}
+
+/** Bandeau de navigation dans le tiroir : { remaining, etaSec, offRoute, rerouting } ou null */
+export function setNav(info) {
+  const strip = $('navstrip');
+  if (!info) { strip.classList.remove('show'); document.documentElement.style.removeProperty('--peek'); return; }
+  strip.classList.add('show'); document.documentElement.style.setProperty('--peek', '198px');
+  strip.classList.toggle('off', !!info.offRoute);
+  const r = route.route;
+  if (info.offRoute) { $('nsEta').textContent = info.rerouting ? 'Recalcul…' : 'Hors route'; $('nsDur').textContent = '—'; $('nsKm').textContent = r.dest?.name || ''; }
+  else {
+    $('nsEta').textContent = new Date(Date.now() + info.etaSec * 1000).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
+    $('nsDur').textContent = fmtDuration(info.etaSec * 1000);
+    $('nsKm').textContent = `${fmtKm(info.remaining, info.remaining < 10000 ? 1 : 0)} km · ${r.dest?.name || ''}`;
+  }
+  $('nsCost').textContent = '≈ ' + euro((r.tollCost || 0) + (r.fuelCost || 0));
+  $('nsCostSub').textContent = r.hasToll ? `péage ${euro(r.tollCost)} + ${fuel.FUELS[S.fuelType] || 'carburant'}` : `sans péage · ${fuel.FUELS[S.fuelType] || 'carburant'}`;
+}
+
+// icônes de manœuvre (types Valhalla)
+function turnSvg(type) {
+  const arrow = rot => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" style="transform:rotate(${rot}deg)"><path d="M12 20V5M6 11l6-6 6 6"/></svg>`;
+  const uturn = flip => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" style="transform:scaleX(${flip ? -1 : 1})"><path d="M8 20V9a4 4 0 0 1 8 0v11M12 16l4 4 4-4"/></svg>`;
+  const rb = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="13" r="5"/><path d="M12 8V2M9 5l3-3 3 3"/></svg>';
+  const flag = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 21V4h12l-1 4 1 4H5"/></svg>';
+  switch (type) {
+    case 4: case 5: case 6: return flag;
+    case 9: case 18: case 23: case 37: return arrow(45);
+    case 10: case 20: return arrow(90);
+    case 11: return arrow(135);
+    case 12: return uturn(false);
+    case 13: return uturn(true);
+    case 14: return arrow(-135);
+    case 15: case 21: return arrow(-90);
+    case 16: case 19: case 24: case 38: return arrow(-45);
+    case 26: case 27: return rb;
+    default: return arrow(0);
+  }
+}
+const TURN_TXT = { 4: 'Arrivée', 5: 'Arrivée à droite', 6: 'Arrivée à gauche', 9: 'Légèrement à droite', 10: 'À droite', 11: 'Franchement à droite', 12: 'Demi-tour', 13: 'Demi-tour', 14: 'Franchement à gauche', 15: 'À gauche', 16: 'Légèrement à gauche', 17: 'Bretelle', 18: 'Bretelle à droite', 19: 'Bretelle à gauche', 20: 'Sortie à droite', 21: 'Sortie à gauche', 22: 'Tout droit', 23: 'Serrer à droite', 24: 'Serrer à gauche', 25: 'Insertion', 26: 'Rond-point', 27: 'Sortie du rond-point', 37: 'Insertion à droite', 38: 'Insertion à gauche' };
+function shortInstruction(m) {
+  const base = TURN_TXT[m.type] || 'Continuer';
+  if (m.type === 26 && m.exit) return `Rond-point, ${m.exit}${m.exit === 1 ? 're' : 'e'} sortie${m.street ? ' · ' + m.street : ''}`;
+  return m.street ? `${base} · ${m.street}` : (m.instruction || base);
+}
+/** Carte de manœuvre : { m, dist, index } ou null */
+let lastTurnKey = '';
+export function setTurn(t) {
+  const el = $('turn');
+  if (!t) { el.classList.remove('show'); lastTurnKey = ''; return; }
+  el.classList.add('show');
+  const f = fmtDist(t.dist); $('turnDist').textContent = t.dist < 30 ? 'Maintenant' : `${f.v} ${f.u}`;
+  const key = t.index + ':' + t.m.type;
+  if (key !== lastTurnKey) { lastTurnKey = key; $('turnIcon').innerHTML = turnSvg(t.m.type); $('turnIns').textContent = shortInstruction(t.m); }
 }

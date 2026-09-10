@@ -39,6 +39,13 @@ export const DEFAULTS = {
   autoZoom: true,
   showAllRadars: true,
   routeOnly: true,          // avec itinéraire : n'alerter que les radars du trajet
+  turnVoice: false,         // annonces vocales des manœuvres
+  avoidTolls: false,
+  avoidRadars: false,
+  fuelType: 'sp98',
+  consumption: 7,           // L/100 km
+  fuelPrice: 0,             // €/L, 0 = prix moyen national en direct
+  tollRate: 0.11,           // €/km d'autoroute à péage (estimation)
 };
 let settings = Object.assign({}, DEFAULTS, get('settings', {}));
 export const S = settings;

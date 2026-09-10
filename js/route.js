@@ -1,16 +1,18 @@
-// Itinéraire : recherche d'adresse (Photon + Base Adresse Nationale), calcul (OSRM, secours Valhalla),
+// Itinéraire : recherche d'adresse (Photon + Base Adresse Nationale), calcul (Valhalla, secours OSRM),
+// alternatives, évitement péages / radars, coûts (péage, carburant), guidage (manœuvres),
 // projection de la position sur le tracé, radars situés sur le trajet, recalcul si on quitte la route.
-import { distance, projectToSegment } from './geom.js';
+import { distance, bearing, projectToSegment } from './geom.js';
 import { near } from './radars.js';
-import { get, set, emit } from './store.js';
+import { get, set, emit, S } from './store.js';
+import * as fuel from './fuel.js';
 
 const ON_ROUTE_M = 35;        // distance max radar ↔ tracé pour être « sur le trajet »
 const OFF_ROUTE_M = 80;       // au-delà : hors itinéraire
 const OFF_ROUTE_MS = 8000;    // pendant N ms avant recalcul
 
 const state = {
-  active: false, dest: null, coords: [], cum: [], total: 0, duration: 0,
-  onRoute: [], lastIdx: 0, userS: 0, offSince: 0, rerouting: false, lastReroute: 0, arrived: false,
+  active: false, dest: null, opts: {}, coords: [], cum: [], total: 0, duration: 0, maneuvers: [], tollKm: 0, tollCost: 0, fuelCost: 0, hasToll: false,
+  onRoute: [], lastIdx: 0, userS: 0, offSince: 0, rerouting: false, lastReroute: 0, arrived: false, startedAt: 0,
 };
 export const route = state;
 export function isActive() { return state.active && state.coords.length > 1; }
@@ -31,7 +33,7 @@ export async function geocode(q, nearPos) {
   };
   for (const f of p?.features || []) {
     const pr = f.properties, [lon, lat] = f.geometry.coordinates;
-    if (pr.osm_value === 'bus_stop' || pr.osm_value === 'tram_stop' || pr.osm_key === 'boundary') continue; // arrêts de bus, limites administratives
+    if (pr.osm_value === 'bus_stop' || pr.osm_value === 'tram_stop' || pr.osm_key === 'boundary') continue;
     const name = pr.name || [pr.housenumber, pr.street].filter(Boolean).join(' ') || pr.city;
     const sub = [pr.street && pr.name ? [pr.housenumber, pr.street].filter(Boolean).join(' ') : '', pr.postcode, pr.city || pr.county, pr.country !== 'France' ? pr.country : ''].filter(Boolean).join(' · ');
     push(name, sub, lon, lat);
@@ -51,14 +53,6 @@ function remember(dest) {
 }
 
 // ---------------------------------------------------------------- calcul
-async function osrm(from, to) {
-  const url = `https://router.project-osrm.org/route/v1/driving/${from.lon},${from.lat};${to.lon},${to.lat}?overview=full&geometries=geojson&steps=false`;
-  const ctrl = new AbortController(); const t = setTimeout(() => ctrl.abort(), 12000);
-  const j = await (await fetch(url, { signal: ctrl.signal })).json(); clearTimeout(t);
-  if (j.code !== 'Ok' || !j.routes?.length) throw new Error(j.message || j.code || 'OSRM');
-  const r = j.routes[0];
-  return { coords: r.geometry.coordinates.map(([lon, lat]) => [lat, lon]), total: r.distance, duration: r.duration };
-}
 function decodePolyline6(str) {
   let idx = 0, lat = 0, lon = 0; const out = [];
   while (idx < str.length) {
@@ -71,21 +65,54 @@ function decodePolyline6(str) {
   }
   return out;
 }
-async function valhalla(from, to) {
-  const body = { locations: [{ lat: from.lat, lon: from.lon }, { lat: to.lat, lon: to.lon }], costing: 'auto', units: 'kilometers' };
-  const ctrl = new AbortController(); const t = setTimeout(() => ctrl.abort(), 12000);
-  const j = await (await fetch('https://valhalla1.openstreetmap.de/route?json=' + encodeURIComponent(JSON.stringify(body)), { signal: ctrl.signal })).json(); clearTimeout(t);
-  if (!j.trip?.legs?.length) throw new Error('Valhalla');
-  const coords = j.trip.legs.flatMap(l => decodePolyline6(l.shape));
-  return { coords, total: j.trip.summary.length * 1000, duration: j.trip.summary.time };
+function withCum(coords) {
+  const cum = [0];
+  for (let i = 1; i < coords.length; i++) cum[i] = cum[i - 1] + distance(coords[i - 1][0], coords[i - 1][1], coords[i][0], coords[i][1]);
+  return cum;
 }
 
-export async function compute(from, to) {
-  let r;
-  try { r = await osrm(from, to); } catch (e) { console.warn('OSRM', e); r = await valhalla(from, to); }
-  const cum = [0];
-  for (let i = 1; i < r.coords.length; i++) cum[i] = cum[i - 1] + distance(r.coords[i - 1][0], r.coords[i - 1][1], r.coords[i][0], r.coords[i][1]);
-  return { ...r, cum, total: cum[cum.length - 1] || r.total };
+async function fetchJson(url, ms = 15000) {
+  const ctrl = new AbortController(); const t = setTimeout(() => ctrl.abort(), ms);
+  try { const r = await fetch(url, { signal: ctrl.signal }); return await r.json(); } finally { clearTimeout(t); }
+}
+
+/** Valhalla : plusieurs itinéraires (principal + alternatives) avec manœuvres et km à péage */
+async function valhalla(from, to, opts = {}) {
+  const body = {
+    locations: [{ lat: from.lat, lon: from.lon }, { lat: to.lat, lon: to.lon }],
+    costing: 'auto', units: 'kilometers', language: 'fr-FR',
+    alternates: opts.alternates ? 2 : 0,
+    costing_options: { auto: opts.avoidTolls ? { use_tolls: 0, toll_booth_penalty: 900 } : { use_tolls: 1 } },
+  };
+  if (opts.exclude?.length) body.exclude_locations = opts.exclude.slice(0, 50).map(p => ({ lat: p.lat, lon: p.lon }));
+  const j = await fetchJson('https://valhalla1.openstreetmap.de/route?json=' + encodeURIComponent(JSON.stringify(body)), 20000);
+  if (!j.trip?.legs?.length) throw new Error(j.error || 'Valhalla');
+  const parse = trip => {
+    const coords = [], maneuvers = []; let offset = 0, tollKm = 0;
+    for (const leg of trip.legs) {
+      const shape = decodePolyline6(leg.shape);
+      for (const m of leg.maneuvers) {
+        if (m.toll) tollKm += m.length;
+        maneuvers.push({ type: m.type, instruction: m.instruction, verbal: m.verbal_pre_transition_instruction || m.instruction, street: (m.street_names || m.begin_street_names || []).join(' / '), len: m.length * 1000, begin: m.begin_shape_index + offset, exit: m.roundabout_exit_count || 0, toll: !!m.toll });
+      }
+      coords.push(...(coords.length ? shape.slice(1) : shape));
+      offset = coords.length - 1;
+    }
+    const cum = withCum(coords);
+    for (const m of maneuvers) m.s = cum[Math.min(m.begin, cum.length - 1)];
+    return { coords, cum, total: cum[cum.length - 1], duration: trip.summary.time, tollKm: tollKm * 1000, hasToll: !!trip.summary.has_toll, maneuvers, source: 'valhalla' };
+  };
+  return [parse(j.trip), ...(j.alternates || []).map(a => parse(a.trip))];
+}
+
+/** OSRM : secours (un seul itinéraire, sans manœuvres ni péages) */
+async function osrm(from, to) {
+  const j = await fetchJson(`https://router.project-osrm.org/route/v1/driving/${from.lon},${from.lat};${to.lon},${to.lat}?overview=full&geometries=geojson&steps=false`, 12000);
+  if (j.code !== 'Ok' || !j.routes?.length) throw new Error(j.message || j.code || 'OSRM');
+  const r = j.routes[0];
+  const coords = r.geometry.coordinates.map(([lon, lat]) => [lat, lon]);
+  const cum = withCum(coords);
+  return [{ coords, cum, total: cum[cum.length - 1], duration: r.duration, tollKm: 0, hasToll: false, maneuvers: [], source: 'osrm' }];
 }
 
 /** Radars à moins de ON_ROUTE_M du tracé, avec leur abscisse `s` le long du trajet */
@@ -100,7 +127,6 @@ function radarsOnRoute(coords, cum) {
   const out = [];
   for (const r of cands.values()) {
     let best = Infinity, bs = 0;
-    // fenêtre : segments dont un sommet est à moins de 600 m (évite O(n) complet)
     for (let i = 1; i < coords.length; i++) {
       const a = coords[i - 1], b = coords[i];
       if (Math.abs(a[0] - r.lat) > 0.006 || Math.abs(a[1] - r.lon) > 0.009) continue;
@@ -113,17 +139,75 @@ function radarsOnRoute(coords, cum) {
   return out;
 }
 
-export async function start(dest, from) {
-  const r = await compute(from, dest);
-  Object.assign(state, { active: true, dest, coords: r.coords, cum: r.cum, total: r.total, duration: r.duration, lastIdx: 0, userS: 0, offSince: 0, rerouting: false, arrived: false, startedAt: Date.now() });
-  state.onRoute = radarsOnRoute(r.coords, r.cum);
+function enrich(r) {
+  r.onRoute = radarsOnRoute(r.coords, r.cum);
+  r.radars = r.onRoute.length;
+  r.tollCost = r.tollKm / 1000 * (S.tollRate ?? 0.11);
+  const price = fuel.price();
+  r.fuelPrice = price;
+  r.fuelLiters = r.total / 1000 * (S.consumption ?? 7) / 100;
+  r.fuelCost = price ? r.fuelLiters * price : 0;
+  return r;
+}
+
+/**
+ * Planification façon Waze : renvoie jusqu'à 3 propositions { label, ...route }.
+ * opts : { avoidTolls, avoidRadars }
+ */
+export async function plan(from, to, opts = {}) {
+  await fuel.load().catch(() => {});
+  let routes;
+  try { routes = await valhalla(from, to, { ...opts, alternates: true }); }
+  catch (e) { console.warn('Valhalla', e); routes = await osrm(from, to); }
+  routes.forEach(enrich);
+
+  if (opts.avoidRadars && routes[0].source === 'valhalla') {
+    // on exclut les radars du meilleur trajet et on recalcule (2 passes max)
+    let best = routes.slice().sort((a, b) => a.radars - b.radars || a.duration - b.duration)[0];
+    const excluded = new Map();
+    for (let pass = 0; pass < 2 && best.radars > 0; pass++) {
+      for (const x of best.onRoute) excluded.set(x.r.id, { lat: x.r.lat, lon: x.r.lon });
+      try {
+        const alt = (await valhalla(from, to, { ...opts, exclude: [...excluded.values()] })).map(enrich);
+        const cand = alt.sort((a, b) => a.radars - b.radars || a.duration - b.duration)[0];
+        if (cand && (cand.radars < best.radars || (cand.radars === best.radars && cand.duration < best.duration))) { cand.avoidsRadars = true; best = cand; }
+        else break;
+      } catch (e) { console.warn('évitement radars', e); break; }
+    }
+    if (!routes.includes(best)) routes.unshift(best);
+    else { routes.splice(routes.indexOf(best), 1); routes.unshift(best); }
+  }
+  // dédoublonnage (même durée/distance)
+  const uniq = [];
+  for (const r of routes) if (!uniq.some(u => Math.abs(u.total - r.total) < 200 && Math.abs(u.duration - r.duration) < 30)) uniq.push(r);
+  const out = uniq.slice(0, 3);
+  out.forEach((r, i) => { r.id = i; r.label = labelFor(r, out); });
+  return out;
+}
+function labelFor(r, all) {
+  if (r.avoidsRadars) return 'Le moins de radars';
+  const fastest = all.reduce((a, b) => a.duration <= b.duration ? a : b);
+  if (r === fastest) return 'Le plus rapide';
+  if (!r.hasToll && all.some(x => x.hasToll)) return 'Sans péage';
+  if (all.some(x => x.radars > r.radars) && r.radars === Math.min(...all.map(x => x.radars))) return 'Moins de radars';
+  const shortest = all.reduce((a, b) => a.total <= b.total ? a : b);
+  if (r === shortest) return 'Le plus court';
+  return 'Alternative';
+}
+
+export function start(dest, r, opts = {}) {
+  Object.assign(state, {
+    active: true, dest, opts, coords: r.coords, cum: r.cum, total: r.total, duration: r.duration, maneuvers: r.maneuvers || [],
+    tollKm: r.tollKm, tollCost: r.tollCost, fuelCost: r.fuelCost, onRoute: r.onRoute, hasToll: r.hasToll,
+    lastIdx: 0, userS: 0, offSince: 0, rerouting: false, arrived: false, startedAt: Date.now(),
+  });
   remember(dest);
   emit('route', state);
   return state;
 }
 
 export function stop() {
-  Object.assign(state, { active: false, dest: null, coords: [], cum: [], total: 0, duration: 0, onRoute: [], userS: 0, arrived: false });
+  Object.assign(state, { active: false, dest: null, coords: [], cum: [], total: 0, duration: 0, maneuvers: [], onRoute: [], userS: 0, arrived: false, tollCost: 0, fuelCost: 0, hasToll: false });
   emit('route', state);
 }
 
@@ -141,13 +225,31 @@ export function project(fix) {
   };
   let best = search(state.lastIdx - 40, state.lastIdx + 80);
   if (best.dist > OFF_ROUTE_M) { const g = search(1, c.length); if (g.dist < best.dist) best = g; }
-  // on n'autorise pas de retour en arrière brutal (boucles) sauf si vraiment plus proche
   state.lastIdx = best.idx;
   state.userS = best.s;
   return best;
 }
 
-/** À chaque fix : état de navigation + candidats radars « sur le trajet » pour le moteur d'alertes */
+/** Cap du tracé à la position projetée (sur ~40 m devant) */
+export function bearingAt(idx) {
+  const c = state.coords; if (c.length < 2) return null;
+  const i = Math.max(1, Math.min(idx, c.length - 1));
+  let j = i; while (j < c.length - 1 && state.cum[j] - state.cum[i - 1] < 40) j++;
+  return bearing(c[i - 1][0], c[i - 1][1], c[j][0], c[j][1]);
+}
+
+/** Prochaine manœuvre : { m, dist, index } ou null */
+export function nextManeuver() {
+  const ms = state.maneuvers; if (!ms.length) return null;
+  for (let i = 0; i < ms.length; i++) {
+    const m = ms[i];
+    if (m.type <= 3) continue;                       // départ
+    if (m.s - state.userS > -25) return { m, dist: Math.max(0, m.s - state.userS), index: i };
+  }
+  return null;
+}
+
+/** À chaque fix : état de navigation */
 export function update(fix) {
   if (!isActive()) return null;
   const p = project(fix);
@@ -159,17 +261,18 @@ export function update(fix) {
   const needReroute = offRoute && now - state.offSince > OFF_ROUTE_MS && fix.speed > 2 && !state.rerouting && now - state.lastReroute > 20000;
   const arrived = !state.arrived && (dToDest < 40 || (remaining < 40 && p.dist < OFF_ROUTE_M));
   if (arrived) state.arrived = true;
-  const speed = fix.speed > 3 ? fix.speed : Math.max(8, state.total / Math.max(1, state.duration));
+  const avg = state.total / Math.max(1, state.duration);
+  const speed = fix.speed > 3 ? 0.4 * fix.speed + 0.6 * avg : avg;   // ETA : mélange vitesse actuelle / moyenne prévue
   const etaSec = remaining / speed;
-  return { remaining, etaSec, offRoute, needReroute, arrived, dist: p.dist, s: p.s };
+  return { remaining, etaSec, offRoute, needReroute, arrived, dist: p.dist, s: p.s, routeBearing: offRoute ? null : bearingAt(p.idx), maneuver: offRoute ? null : nextManeuver() };
 }
 
 export async function reroute(fix) {
   state.rerouting = true; state.lastReroute = Date.now();
   try {
-    const r = await compute({ lat: fix.lat, lon: fix.lon }, state.dest);
-    Object.assign(state, { coords: r.coords, cum: r.cum, total: r.total, duration: r.duration, lastIdx: 0, userS: 0, offSince: 0 });
-    state.onRoute = radarsOnRoute(r.coords, r.cum);
+    const rs = await plan({ lat: fix.lat, lon: fix.lon }, state.dest, state.opts);
+    const r = rs[0];
+    Object.assign(state, { coords: r.coords, cum: r.cum, total: r.total, duration: r.duration, maneuvers: r.maneuvers || [], tollKm: r.tollKm, tollCost: r.tollCost, fuelCost: r.fuelCost, onRoute: r.onRoute, hasToll: r.hasToll, lastIdx: 0, userS: 0, offSince: 0 });
     emit('route', state);
     return true;
   } catch (e) { console.warn('reroute', e); return false; }
@@ -183,24 +286,28 @@ export function candidates(fix) {
   for (const { r, s } of state.onRoute) {
     if (r.expires && r.expires < Date.now()) continue;
     const along = s - state.userS;
-    if (along >= -20 && along < 2500) out.push({ r, d: Math.max(along, 0), brg: h });               // devant, sur le trajet
-    else if (along < -20 && along > -400) out.push({ r, d: -along, brg: (h + 180) % 360 });          // juste passé → « passed »
+    if (along >= -20 && along < 2500) out.push({ r, d: Math.max(along, 0), brg: h });
+    else if (along < -20 && along > -400) out.push({ r, d: -along, brg: (h + 180) % 360 });
   }
   out.sort((a, b) => a.d - b.d);
   return out;
 }
 
-/** Prochains radars sur le trajet (liste) */
 export function nextOnRoute(limit = 3) {
   return state.onRoute.filter(x => x.s - state.userS > -20).slice(0, limit).map(x => ({ r: x.r, d: Math.max(0, x.s - state.userS) }));
 }
 
-export function geojson() {
-  if (!isActive()) return { type: 'FeatureCollection', features: [] };
-  return { type: 'FeatureCollection', features: [{ type: 'Feature', geometry: { type: 'LineString', coordinates: state.coords.map(([lat, lon]) => [lon, lat]) }, properties: {} }] };
+export function geojson(r = null) {
+  const src = r || (isActive() ? state : null);
+  if (!src || !src.coords?.length) return { type: 'FeatureCollection', features: [] };
+  return { type: 'FeatureCollection', features: [{ type: 'Feature', geometry: { type: 'LineString', coordinates: src.coords.map(([lat, lon]) => [lon, lat]) }, properties: {} }] };
 }
-export function bounds() {
+export function geojsonMany(list) {
+  return { type: 'FeatureCollection', features: list.map(r => ({ type: 'Feature', geometry: { type: 'LineString', coordinates: r.coords.map(([lat, lon]) => [lon, lat]) }, properties: { id: r.id } })) };
+}
+export function bounds(r = null) {
+  const c = (r || state).coords;
   let minLat = 90, maxLat = -90, minLon = 180, maxLon = -180;
-  for (const [lat, lon] of state.coords) { if (lat < minLat) minLat = lat; if (lat > maxLat) maxLat = lat; if (lon < minLon) minLon = lon; if (lon > maxLon) maxLon = lon; }
+  for (const [lat, lon] of c) { if (lat < minLat) minLat = lat; if (lat > maxLat) maxLat = lat; if (lon < minLon) minLon = lon; if (lon > maxLon) maxLon = lon; }
   return [[minLon, minLat], [maxLon, maxLat]];
 }

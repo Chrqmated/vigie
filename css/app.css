@@ -91,7 +91,7 @@ svg { display: block; }
 }
 @keyframes pulse { 0% { transform: translate(-50%, -50%) scale(.6); opacity: .9; } 100% { transform: translate(-50%, -50%) scale(2.6); opacity: 0; } }
 .me .chevron {
-  position: absolute; left: 50%; top: 50%; width: 36px; height: 36px; transform: translate(-50%, -50%);
+  position: absolute; left: 50%; top: 50%; width: 46px; height: 46px; transform: translate(-50%, -50%);
   filter: drop-shadow(0 3px 6px rgba(0, 0, 0, .35));
 }
 .me.stopped .chevron { display: none; }
@@ -234,23 +234,6 @@ svg { display: block; }
 .action:active { background: var(--accent-soft); }
 .brand { text-align: center; margin: 18px 0 4px; font-size: 11px; color: var(--text-3); }
 
-/* --------------------------------------------------------------- route bar */
-.routebar {
-  position: absolute; left: calc(var(--sal) + 12px); bottom: calc(var(--sab) + var(--peek) + 24px); z-index: 6;
-  display: none; align-items: center; gap: 10px; height: 52px; padding: 0 6px 0 14px; border-radius: 999px; max-width: calc(100% - 175px);
-  background: var(--surface); -webkit-backdrop-filter: var(--blur); backdrop-filter: var(--blur); box-shadow: var(--shadow-sm); border: 1px solid var(--border);
-  transition: opacity .3s;
-}
-.routebar.show { display: flex; }
-.sheet.open ~ .routebar { opacity: 0; pointer-events: none; }
-.routebar > svg { width: 20px; height: 20px; color: var(--danger); flex: none; }
-.routebar .rb { min-width: 0; }
-.routebar .rb-main { font-family: var(--font-display); font-weight: 800; font-size: 16px; letter-spacing: -.02em; white-space: nowrap; }
-.routebar .rb-sub { font-size: 11px; color: var(--text-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.routebar .rb-close { width: 38px; height: 38px; border-radius: 50%; background: var(--surface-2); display: grid; place-items: center; color: var(--text-2); flex: none; }
-.routebar .rb-close svg { width: 16px; height: 16px; }
-.routebar.off .rb-main { color: var(--warn); }
-
 /* recherche */
 .search { display: flex; align-items: center; gap: 10px; background: var(--surface-2); border-radius: 14px; padding: 0 14px; height: 50px; margin-top: 6px; }
 .search svg { width: 20px; height: 20px; color: var(--text-3); flex: none; }
@@ -375,3 +358,57 @@ textarea { width: 100%; min-height: 110px; border-radius: 12px; border: 1px soli
   .modal.show .panel { transform: translate(-50%, 0); }
   .fabs { right: calc(50% - 230px + 12px); }
 }
+
+/* --------------------------------------------------------------- navigation (bandeau dans le tiroir) */
+.navstrip { display: none; grid-template-columns: auto 1fr auto auto; align-items: center; gap: 14px; padding: 2px 18px 10px 22px; border-bottom: 1px solid var(--border); margin-bottom: 8px; }
+.navstrip.show { display: grid; }
+.navstrip .v { font-family: var(--font-display); font-weight: 800; letter-spacing: -.03em; line-height: 1.05; }
+.navstrip .k { font-size: 11px; color: var(--text-2); font-weight: 600; text-transform: uppercase; letter-spacing: .06em; margin-top: 2px; }
+.navstrip .ns-eta .v { font-size: 30px; color: var(--ok); }
+.navstrip .ns-mid .v { font-size: 18px; }
+.navstrip .ns-mid .k { text-transform: none; font-size: 13px; letter-spacing: 0; }
+.navstrip .ns-cost { text-align: right; }
+.navstrip .ns-cost .v { font-size: 18px; }
+.navstrip .ns-cost .k { text-transform: none; letter-spacing: 0; }
+.navstrip .ns-close { width: 36px; height: 36px; border-radius: 50%; background: var(--surface-2); display: grid; place-items: center; color: var(--text-2); }
+.navstrip .ns-close svg { width: 16px; height: 16px; }
+.navstrip.off .ns-eta .v { color: var(--warn); font-size: 20px; }
+
+/* guidage : manœuvre */
+.turn {
+  position: absolute; left: calc(var(--sal) + 12px); top: calc(var(--sat) + 10px); z-index: 6; width: calc(100% - var(--sal) - var(--sar) - 82px); max-width: 360px;
+  display: none; align-items: center; gap: 12px; padding: 10px 14px 10px 10px; border-radius: 18px;
+  background: var(--surface-solid); box-shadow: var(--shadow); border: 1px solid var(--border);
+}
+.turn.show { display: flex; }
+.turn.show ~ .top .chip { display: none; }
+.turn-icon { width: 52px; height: 52px; border-radius: 14px; background: var(--accent); color: #fff; display: grid; place-items: center; flex: none; }
+.turn-icon svg { width: 34px; height: 34px; }
+.turn-txt { min-width: 0; }
+.turn-dist { font-family: var(--font-display); font-weight: 800; font-size: 24px; letter-spacing: -.03em; line-height: 1; }
+.turn-ins { font-size: 13px; color: var(--text-2); margin-top: 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.turn.show ~ .alert { top: calc(var(--sat) + 88px); }
+.turn.show ~ .section { top: calc(var(--sat) + 88px); }
+.turn.show ~ .alert.show ~ .section.show { top: calc(var(--sat) + 202px); }
+.turn.show ~ .simbar { top: calc(var(--sat) + 88px); }
+
+/* planification façon Waze */
+.modal.plan .panel { max-height: 58%; }
+.plan-sub { font-size: 13px; color: var(--text-2); margin-top: 2px; }
+.plan-card {
+  display: grid; grid-template-columns: 1fr auto; gap: 6px 12px; align-items: center; text-align: left; width: 100%;
+  padding: 12px 14px; border-radius: var(--radius-sm); background: var(--surface-2); border: 2px solid transparent;
+}
+.plan-card.on { border-color: var(--accent); background: var(--accent-soft); }
+.plan-card .pc-label { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; color: var(--accent); }
+.plan-card .pc-time { font-family: var(--font-display); font-weight: 800; font-size: 22px; letter-spacing: -.03em; line-height: 1.1; }
+.plan-card .pc-time small { font-size: 13px; color: var(--text-2); font-weight: 600; margin-left: 6px; letter-spacing: 0; }
+.plan-card .pc-eta { font-family: var(--font-display); font-weight: 800; font-size: 20px; color: var(--ok); text-align: right; letter-spacing: -.02em; }
+.plan-card .pc-eta small { display: block; font-size: 10px; color: var(--text-2); font-weight: 700; text-transform: uppercase; letter-spacing: .06em; }
+.plan-card .pc-tags { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 6px; }
+.tag { display: inline-flex; align-items: center; gap: 5px; padding: 4px 9px; border-radius: 999px; background: var(--surface-solid); font-size: 12px; font-weight: 700; color: var(--text-2); border: 1px solid var(--border); }
+.tag.good { color: var(--ok); }
+.tag.warn { color: var(--warn); }
+.tag.bad { color: var(--danger); }
+.tag svg { width: 13px; height: 13px; }
+#planList { margin-top: 12px; }
