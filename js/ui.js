@@ -1,0 +1,328 @@
+// Interface : tiroir, carte d'alerte, panneaux, réglages, feuilles modales
+import { S, DEFAULTS, setSetting, saveSettings, on, emit } from './store.js';
+import { TYPES, radars } from './radars.js';
+import { fmtDist, fmtKm, fmtDuration } from './geom.js';
+import * as trip from './trip.js';
+import * as custom from './custom.js';
+import * as map from './map.js';
+
+const $ = id => document.getElementById(id);
+const el = {};
+let currentTheme = 'light';
+let reportState = null;
+let toastTimer = 0;
+
+export function resolveTheme() {
+  if (S.theme === 'light' || S.theme === 'dark') return S.theme;
+  const h = new Date().getHours();
+  const night = h >= 20 || h < 7;
+  return (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) || night ? 'dark' : 'light';
+}
+
+export function applyTheme() {
+  currentTheme = resolveTheme();
+  document.documentElement.dataset.theme = currentTheme;
+  document.querySelector('meta[name=theme-color]').content = currentTheme === 'dark' ? '#0b1220' : '#f4f6fa';
+  map.setStyle(currentTheme);
+}
+
+export function init() {
+  ['gpsDot', 'gpsText', 'alert', 'alertIcon', 'alertTitle', 'alertSub', 'alertDist', 'alertUnit', 'alertBar', 'section', 'secAvg', 'secSign', 'secRem',
+    'sheet', 'peek', 'speedBox', 'speedV', 'limitSign', 'limitSrc', 'tripKm', 'tripDur', 'stAvg', 'stMax', 'stOdo', 'stRadars', 'nextList',
+    'btnRecenter', 'btnReport', 'toast', 'start', 'btnStart', 'startCount', 'startVersion', 'startHint', 'simbar', 'simStop', 'brand'].forEach(k => el[k] = $(k));
+
+  // modales : fermeture
+  document.querySelectorAll('[data-close]').forEach(b => b.addEventListener('click', () => b.closest('.modal').classList.remove('show')));
+
+  // tiroir : glisser
+  initSheet();
+
+  el.btnRecenter.addEventListener('click', () => map.setFollow(true));
+  on('follow', v => el.btnRecenter.classList.toggle('show', !v));
+  $('btnSettings').addEventListener('click', openSettings);
+  $('btnTheme').addEventListener('click', () => { setSetting('theme', currentTheme === 'dark' ? 'light' : 'dark'); applyTheme(); });
+  el.btnReport.addEventListener('click', () => emit('ui:report'));
+  $('actReport').addEventListener('click', () => { closeSheet(); emit('ui:report'); });
+  $('actHistory').addEventListener('click', () => { closeSheet(); openHistory(); });
+  $('actMine').addEventListener('click', () => { closeSheet(); openMine(); });
+  $('actSim').addEventListener('click', () => { closeSheet(); emit('ui:sim'); });
+  $('btnNewTrip').addEventListener('click', () => { trip.newTrip(); toast('Nouveau trajet démarré'); });
+  el.simStop.addEventListener('click', () => emit('ui:simstop'));
+  el.alert.addEventListener('click', () => { const a = el.alert.dataset.id; if (a) openDetail(radars.byId.get(a)); });
+
+  on('trip', renderTrip);
+  on('radars', () => { el.stRadars.textContent = (radars.list.length + radars.custom.length).toLocaleString('fr-FR'); el.startCount.textContent = radars.list.length.toLocaleString('fr-FR'); el.startVersion.textContent = radars.version ? radars.version.split('-').reverse().slice(1).join('/') : '—'; el.brand.textContent = `Vigie · base radars data.gouv.fr du ${fmtDate(radars.version)}`; });
+
+  const standalone = window.navigator.standalone || window.matchMedia('(display-mode: standalone)').matches;
+  if (standalone) el.startHint.hidden = true;
+  applyTheme();
+  setInterval(() => { if (S.theme === 'auto' && resolveTheme() !== currentTheme) applyTheme(); }, 60000);
+}
+
+function fmtDate(iso) { return iso ? iso.split('-').reverse().join('/') : '—'; }
+
+// ---------------------------------------------------------------- tiroir
+function initSheet() {
+  const sheet = el.sheet; let startY = 0, startT = 0, dragging = false, openAtStart = false, dy = 0;
+  const h = () => sheet.getBoundingClientRect().height;
+  const onDown = e => {
+    if (e.target.closest('.body') || e.target.closest('button')) return; // le contenu défile nativement
+    startY = e.clientY; startT = Date.now(); dragging = true; openAtStart = sheet.classList.contains('open'); dy = 0;
+    sheet.classList.add('dragging'); sheet.setPointerCapture?.(e.pointerId);
+  };
+  const onMove = e => {
+    if (!dragging) return;
+    dy = e.clientY - startY;
+    const peek = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--peek')) || 128;
+    const sab = Math.max(0, parseFloat(getComputedStyle(sheet).paddingBottom) - 12);
+    const closedY = h() - peek - sab;
+    const base = openAtStart ? 0 : closedY;
+    const y = Math.max(0, Math.min(closedY, base + dy));
+    sheet.style.transform = `translateY(${y}px)`;
+  };
+  const onUp = () => {
+    if (!dragging) return; dragging = false; sheet.classList.remove('dragging'); sheet.style.transform = '';
+    const fast = Date.now() - startT < 250 && Math.abs(dy) > 12;
+    if (openAtStart) { if (dy > 80 || (fast && dy > 0)) closeSheet(); else openSheet(); }
+    else { if (dy < -60 || (fast && dy < 0)) openSheet(); else if (Math.abs(dy) < 6) openSheet(); else closeSheet(); }
+  };
+  sheet.addEventListener('pointerdown', onDown); sheet.addEventListener('pointermove', onMove);
+  sheet.addEventListener('pointerup', onUp); sheet.addEventListener('pointercancel', onUp);
+}
+export function openSheet() { el.sheet.classList.add('open'); }
+export function closeSheet() { el.sheet.classList.remove('open'); }
+
+// ---------------------------------------------------------------- statut GPS
+export function setGps(quality, text) {
+  el.gpsDot.className = 'dot-gps ' + (quality || '');
+  el.gpsText.textContent = text;
+}
+
+// ---------------------------------------------------------------- vitesse / limite / trajet
+let currentLimit = null;
+export function setSpeed(kmh) {
+  const v = Math.round(kmh);
+  el.speedV.textContent = v;
+  const lim = currentLimit?.limit;
+  el.speedBox.classList.toggle('over', !!lim && v > lim + S.tolerance);
+  el.speedBox.classList.toggle('warn', !!lim && v > lim && v <= lim + S.tolerance);
+}
+export function setLimit(l) {
+  currentLimit = l;
+  el.limitSign.classList.toggle('unknown', !l);
+  el.limitSign.classList.toggle('section', !!l && l.source === 'tronçon');
+  el.limitSign.textContent = l ? l.limit : '–';
+  el.limitSrc.textContent = l ? (l.source === 'radar' ? 'radar' : l.source === 'tronçon' ? 'tronçon' : l.source === 'osm' ? (l.name ? l.name.slice(0, 18) : 'route') : 'estimée') : 'limite';
+}
+function renderTrip(t) {
+  const tr = t.trip;
+  el.tripKm.innerHTML = `${fmtKm(tr.dist, tr.dist < 10000 ? 1 : 0)}<small>km</small>`;
+  el.tripDur.textContent = fmtDuration(Date.now() - tr.start);
+  el.stAvg.textContent = Math.round(trip.avgSpeedKmh());
+  el.stMax.textContent = Math.round(tr.maxSpeed * 3.6);
+  el.stOdo.textContent = fmtKm(t.odometer, t.odometer < 100000 ? 1 : 0);
+}
+
+export function setNext(list) {
+  if (!list.length) { el.nextList.innerHTML = '<div class="empty">Aucun radar devant vous dans les 5 km</div>'; return; }
+  el.nextList.innerHTML = list.map(({ r, d }) => {
+    const f = fmtDist(d);
+    return `<button class="row" data-id="${r.id}">${signHtml(r, 'small')}<div><div class="t">${TYPES[r.type]?.label || r.type}</div><div class="s">${subtitle(r)}</div></div><div class="d num">${f.v}<small>${f.u}</small></div></button>`;
+  }).join('');
+  el.nextList.querySelectorAll('.row').forEach(b => b.addEventListener('click', () => openDetail(radars.byId.get(b.dataset.id))));
+}
+
+export function subtitle(r) {
+  const parts = [];
+  if (r.route) parts.push(r.route);
+  if (r.commune) parts.push(r.commune);
+  if (r.sens) parts.push(r.sens.toLowerCase().replace(/\b\p{L}/gu, c => c.toUpperCase()));
+  if (r.note) parts.push(r.note);
+  return parts.join(' · ') || (r.user ? 'Ajouté par vous' : 'Base data.gouv.fr');
+}
+
+export function signHtml(r, cls = '') {
+  const t = r.type;
+  if (t === 'ETFR' || t === 'U_FEU') return `<div class="sign icon ${cls}" style="border-color:#ef4444"><svg viewBox="0 0 24 24"><rect x="8" y="2" width="8" height="20" rx="3" fill="#ef4444"/><circle cx="12" cy="6.5" r="2" fill="#fff"/><circle cx="12" cy="12" r="2" fill="#fde68a"/><circle cx="12" cy="17.5" r="2" fill="#bbf7d0"/></svg></div>`;
+  if (t === 'ETPN') return `<div class="sign icon ${cls}" style="border-color:#f59e0b"><svg viewBox="0 0 24 24" fill="none" stroke="#f59e0b" stroke-width="3.5" stroke-linecap="round"><path d="M5 5l14 14M19 5L5 19"/></svg></div>`;
+  if (t === 'U_DANGER') return `<div class="sign icon ${cls}" style="border-color:#f97316"><svg viewBox="0 0 24 24"><path d="M12 3l10 18H2z" fill="#f97316"/><path d="M12 10v5M12 17.5v.5" stroke="#fff" stroke-width="2.4" stroke-linecap="round"/></svg></div>`;
+  const ring = t === 'ETVM' ? '#8b5cf6' : (r.user ? '#f97316' : '#e0201b');
+  if (!r.vma) return `<div class="sign icon ${cls}" style="border-color:${ring}"><svg viewBox="0 0 24 24"><rect x="3" y="7" width="18" height="13" rx="3" fill="${ring}"/><rect x="8" y="4" width="8" height="4" rx="1.5" fill="${ring}"/><circle cx="12" cy="13.5" r="4" fill="#fff"/><circle cx="12" cy="13.5" r="2" fill="${ring}"/></svg></div>`;
+  return `<div class="sign ${cls} ${t === 'ETVM' ? 'section' : ''}" style="border-color:${ring}">${r.vma}</div>`;
+}
+
+// ---------------------------------------------------------------- alerte
+export function showAlert({ r, d, level, trigger }) {
+  el.alert.dataset.id = r.id;
+  el.alertIcon.innerHTML = signHtml(r);
+  el.alertTitle.textContent = TYPES[r.type]?.label || 'Radar';
+  el.alertSub.textContent = S.dangerZone ? 'Zone de contrôle' : subtitle(r);
+  updateAlert({ d, level, trigger });
+  el.alert.className = 'alert show level-' + (level || 'info');
+  map.setActive(r.id);
+}
+export function updateAlert({ d, level, trigger }) {
+  if (S.dangerZone) { el.alertDist.textContent = '≈' + Math.max(1, Math.round(d / 500) * 0.5).toString().replace('.', ','); el.alertUnit.textContent = 'km'; }
+  else { const f = fmtDist(d); el.alertDist.textContent = f.v; el.alertUnit.textContent = f.u; }
+  const p = trigger ? Math.max(0, Math.min(100, 100 - d / trigger * 100)) : 0;
+  el.alertBar.style.width = p + '%';
+  el.alert.className = 'alert show level-' + (level || 'info');
+}
+export function hideAlert() {
+  el.alert.classList.remove('show'); el.alert.dataset.id = '';
+  map.setActive(null);
+}
+
+// ---------------------------------------------------------------- tronçon
+export function showSection({ vma }) {
+  el.secSign.textContent = vma || '–'; el.secSign.classList.toggle('unknown', !vma);
+  el.secAvg.textContent = '—'; el.secRem.textContent = '';
+  el.section.classList.add('show');
+}
+export function updateSection({ avg, remaining, vma, dist }) {
+  el.secAvg.textContent = Math.round(avg);
+  el.secAvg.classList.toggle('over', !!vma && avg > vma + S.tolerance);
+  el.secRem.textContent = remaining != null ? `reste ${fmtKm(Math.max(0, remaining))} km` : `${fmtKm(dist)} km parcourus`;
+}
+export function hideSection() { el.section.classList.remove('show'); }
+
+// ---------------------------------------------------------------- toast / démarrage / sim
+export function toast(msg, ms = 2600) {
+  el.toast.textContent = msg; el.toast.classList.add('show');
+  clearTimeout(toastTimer); toastTimer = setTimeout(() => el.toast.classList.remove('show'), ms);
+}
+export function hideStart() { el.start.classList.add('hide'); }
+export function onStart(fn) { el.btnStart.addEventListener('click', fn, { once: false }); }
+export function showSim(v) { el.simbar.classList.toggle('show', v); }
+
+// ---------------------------------------------------------------- modales
+function open(id) { document.querySelectorAll('.modal.show').forEach(m => { if (m.id !== id) m.classList.remove('show'); }); $(id).classList.add('show'); }
+function close(id) { $(id).classList.remove('show'); }
+
+export function openDetail(r) {
+  if (!r) return;
+  const t = TYPES[r.type] || { label: r.type };
+  const c = $('detailContent');
+  c.innerHTML = `<div class="detail">${signHtml(r)}<div><h4>${t.label}</h4><p>${subtitle(r)}</p></div></div>
+    <div class="kv">
+      <div><span>Vitesse max</span>${r.vma ? r.vma + ' km/h' : 'non concernée'}</div>
+      <div><span>${r.user ? 'Ajouté le' : 'Mise en service'}</span>${r.user ? new Date(r.created).toLocaleDateString('fr-FR') : fmtDate(r.mes)}</div>
+      ${r.type === 'ETVM' ? `<div><span>Longueur tronçon</span>${r.len ? r.len + ' km' : 'inconnue'}</div>` : ''}
+      ${r.expires ? `<div><span>Expire</span>${new Date(r.expires).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}</div>` : ''}
+      <div><span>Identifiant</span>${r.id}</div>
+      <div><span>Position</span>${r.lat.toFixed(5)}, ${r.lon.toFixed(5)}</div>
+    </div>
+    <div class="btnrow">
+      <button class="btn secondary" id="dGoto">Voir sur la carte</button>
+      ${r.user ? '<button class="btn" id="dEdit">Modifier</button>' : '<button class="btn secondary" id="dReportNear">Signaler à côté</button>'}
+    </div>`;
+  c.querySelector('#dGoto').addEventListener('click', () => { close('mDetail'); map.flyTo(r.lat, r.lon, 16); });
+  c.querySelector('#dEdit')?.addEventListener('click', () => { close('mDetail'); openReport({ lat: r.lat, lon: r.lon, existing: custom.getAll().find(x => x.id === r.id) }); });
+  c.querySelector('#dReportNear')?.addEventListener('click', () => { close('mDetail'); openReport({ lat: r.lat, lon: r.lon }); });
+  open('mDetail');
+}
+
+const REPORT_TYPES = [
+  ['U_MOBILE', 'Mobile / police'], ['U_FIXE', 'Fixe absent'], ['U_FEU', 'Feu rouge'], ['U_DANGER', 'Danger'],
+];
+const VMAS = [30, 50, 70, 80, 90, 110, 130];
+export function openReport({ lat, lon, existing = null, fromPosition = false }) {
+  reportState = { lat, lon, type: existing?.type || 'U_MOBILE', vma: existing?.vma || 0, existing };
+  $('reportTitle').textContent = existing ? 'Modifier le radar' : 'Signaler un radar';
+  $('reportDelete').hidden = !existing;
+  $('reportPos').textContent = (fromPosition ? 'Votre position actuelle · ' : 'Point choisi sur la carte · ') + `${lat.toFixed(5)}, ${lon.toFixed(5)}`;
+  const types = $('reportTypes');
+  types.innerHTML = REPORT_TYPES.map(([k, l]) => `<button class="type ${reportState.type === k ? 'on' : ''}" data-t="${k}">${signHtml({ type: k, vma: 0, user: true }, 'small')}${l}</button>`).join('');
+  types.querySelectorAll('.type').forEach(b => b.addEventListener('click', () => { reportState.type = b.dataset.t; types.querySelectorAll('.type').forEach(x => x.classList.toggle('on', x === b)); }));
+  const vmas = $('reportVma');
+  vmas.innerHTML = `<button class="chipbtn ${!reportState.vma ? 'on' : ''}" data-v="0">Inconnue</button>` + VMAS.map(v => `<button class="chipbtn ${reportState.vma === v ? 'on' : ''}" data-v="${v}">${v}</button>`).join('');
+  vmas.querySelectorAll('.chipbtn').forEach(b => b.addEventListener('click', () => { reportState.vma = +b.dataset.v; vmas.querySelectorAll('.chipbtn').forEach(x => x.classList.toggle('on', x === b)); }));
+  $('reportSave').onclick = () => {
+    if (existing) { custom.update(existing.id, { type: reportState.type, vma: reportState.vma }); toast('Radar modifié'); }
+    else { custom.add({ type: reportState.type, lat, lon, vma: reportState.vma }); toast(reportState.type === 'U_MOBILE' ? `Radar mobile signalé (expire dans ${S.mobileTtlHours} h)` : 'Radar ajouté'); }
+    map.refreshRadars(); close('mReport');
+  };
+  $('reportDelete').onclick = () => { custom.remove(existing.id); map.refreshRadars(); toast('Radar supprimé'); close('mReport'); };
+  open('mReport');
+}
+
+export function openHistory() {
+  $('listTitle').textContent = 'Trajets';
+  const h = trip.trip.history;
+  const c = $('listContent');
+  c.innerHTML = (h.length ? `<div class="list">${h.map(t => `<div class="row" style="grid-template-columns:1fr auto"><div><div class="t">${new Date(t.start).toLocaleDateString('fr-FR', { weekday: 'short', day: 'numeric', month: 'short' })} · ${new Date(t.start).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}</div><div class="s">${fmtDuration(t.end - t.start)} · moy ${t.avg} km/h · max ${t.maxSpeed} km/h</div></div><div class="d num">${fmtKm(t.dist)}<small>km</small></div></div>`).join('')}</div>` : '<div class="empty">Aucun trajet enregistré (les trajets de plus de 300 m sont archivés).</div>')
+    + `<div class="btnrow" style="margin-top:14px"><button class="btn secondary" id="hReset">Remettre l'odomètre à 0</button><button class="btn danger" id="hClear">Effacer l'historique</button></div>`;
+  c.querySelector('#hReset').addEventListener('click', () => { if (confirm('Remettre le total de kilomètres à zéro ?')) { trip.resetOdometer(); toast('Odomètre remis à zéro'); } });
+  c.querySelector('#hClear').addEventListener('click', () => { if (confirm('Effacer tous les trajets ?')) { trip.clearHistory(); openHistory(); } });
+  open('mList');
+}
+
+export function openMine() {
+  $('listTitle').textContent = 'Mes radars';
+  const list = custom.getAll();
+  const c = $('listContent');
+  c.innerHTML = (list.length ? `<div class="list">${list.map(x => `<button class="row" data-id="${x.id}">${signHtml({ ...x, user: true }, 'small')}<div><div class="t">${TYPES[x.type]?.label}</div><div class="s">${new Date(x.created).toLocaleDateString('fr-FR')}${x.expires ? ' · expire ' + new Date(x.expires).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }) : ''}</div></div><div class="d">${x.vma || '–'}</div></button>`).join('')}</div>` : '<div class="empty">Aucun radar ajouté. Utilisez « Signaler » ou un appui long sur la carte.</div>')
+    + `<div class="group">Sauvegarde</div><textarea id="mineJson" placeholder="Collez ici un export JSON pour l'importer">${list.length ? custom.exportJson() : ''}</textarea>
+       <div class="btnrow"><button class="btn secondary" id="mineCopy">Copier l'export</button><button class="btn" id="mineImport">Importer</button></div>`;
+  c.querySelectorAll('.row').forEach(b => b.addEventListener('click', () => { close('mList'); openDetail(radars.byId.get(b.dataset.id)); }));
+  c.querySelector('#mineCopy').addEventListener('click', async () => { try { await navigator.clipboard.writeText(custom.exportJson()); toast('Export copié'); } catch { $('mineJson').select(); toast('Sélectionnez et copiez le texte'); } });
+  c.querySelector('#mineImport').addEventListener('click', () => { try { const n = custom.importJson($('mineJson').value); map.refreshRadars(); toast(`${n} radar(s) importé(s)`); openMine(); } catch (e) { toast('Import impossible : ' + e.message); } });
+  open('mList');
+}
+
+// ---------------------------------------------------------------- réglages
+const SCHEMA = [
+  ['Alertes'],
+  ['voice', 'toggle', 'Annonces vocales', 'Voix française : « Radar fixe à 500 mètres, limité à 90 »'],
+  ['sound', 'toggle', 'Sons', 'Carillon à l\'approche, double bip à proximité'],
+  ['forceAudio', 'toggle', 'Son même en mode silencieux', 'Force la sortie audio (peut mettre en pause votre musique). Sinon, désactivez simplement le bouton silencieux.'],
+  ['alertMode', 'select', 'Déclenchement', 'Temps : s\'adapte à votre vitesse', [['time', 'Selon la vitesse'], ['distance', 'Distance fixe']]],
+  ['leadSeconds', 'number', 'Anticipation (s)', 'Alerte N secondes avant le radar', { min: 10, max: 60, step: 5 }],
+  ['minDist', 'number', 'Distance mini (m)', '', { min: 100, max: 1000, step: 50 }],
+  ['maxDist', 'number', 'Distance maxi (m)', '', { min: 500, max: 3000, step: 100 }],
+  ['fixedDist', 'number', 'Distance fixe (m)', 'Utilisée en mode « distance fixe »', { min: 200, max: 2000, step: 50 }],
+  ['onlyAhead', 'toggle', 'Seulement les radars devant', 'Ignore ceux hors de votre cap (±35°)'],
+  ['overspeedAlert', 'toggle', 'Alerte dépassement', 'Petit son toutes les 15 s au-dessus de la limite'],
+  ['tolerance', 'number', 'Tolérance (km/h)', 'Marge avant de passer au rouge', { min: 0, max: 20, step: 1 }],
+  ['dangerZone', 'toggle', 'Mode zone de danger', 'Alerte « zone de contrôle » à 2 km sans distance précise, façon assistant d\'aide à la conduite'],
+  ['Carte'],
+  ['mapStyle', 'select', 'Style de carte', '', [['auto', 'Auto (jour / nuit)'], ['liberty', 'Liberty'], ['bright', 'Bright'], ['positron', 'Positron'], ['dark', 'Dark'], ['fiord', 'Fiord']]],
+  ['theme', 'select', 'Thème', '', [['auto', 'Automatique'], ['light', 'Clair'], ['dark', 'Sombre']]],
+  ['pitch', 'toggle', 'Vue inclinée', 'Perspective 3D en navigation'],
+  ['autoZoom', 'toggle', 'Zoom automatique', 'Dézoome quand la vitesse augmente'],
+  ['osmLimits', 'toggle', 'Limites de vitesse OpenStreetMap', 'Affiche la limite de la route hors radar (couverture partielle)'],
+  ['keepAwake', 'toggle', 'Écran toujours allumé', 'Nécessaire pour les alertes : iOS coupe le GPS écran éteint'],
+  ['Signalements'],
+  ['mobileTtlHours', 'number', 'Durée radars mobiles (h)', 'Expiration automatique des radars mobiles signalés', { min: 1, max: 48, step: 1 }],
+];
+export function openSettings() {
+  const c = $('settingsContent');
+  c.innerHTML = SCHEMA.map(row => {
+    if (row.length === 1) return `<div class="group">${row[0]}</div>`;
+    const [k, type, label, help, extra] = row;
+    const l = `<div class="l">${label}${help ? `<small>${help}</small>` : ''}</div>`;
+    if (type === 'toggle') return `<div class="cell">${l}<button class="toggle ${S[k] ? 'on' : ''}" data-k="${k}" role="switch" aria-checked="${!!S[k]}"></button></div>`;
+    if (type === 'select') return `<div class="cell">${l}<select data-k="${k}">${extra.map(([v, t]) => `<option value="${v}" ${S[k] === v ? 'selected' : ''}>${t}</option>`).join('')}</select></div>`;
+    if (type === 'number') return `<div class="cell">${l}<input type="number" data-k="${k}" value="${S[k]}" min="${extra.min}" max="${extra.max}" step="${extra.step}" inputmode="numeric"></div>`;
+    return '';
+  }).join('') + `
+    <div class="group">Base radars</div>
+    <p class="note" id="dbInfo">Base data.gouv.fr du ${fmtDate(radars.version)} · ${radars.list.length.toLocaleString('fr-FR')} radars</p>
+    <div class="btnrow"><button class="btn secondary" id="btnTestVoice">Tester la voix</button><button class="btn" id="btnUpdateDb">Mettre à jour</button></div>
+    <div class="group">À propos</div>
+    <p class="note">Vigie affiche les radars fixes publiés par le Ministère de l'Intérieur (Licence Ouverte 2.0), enrichis de l'ancienne base « Radars automatiques » (route, sens, commune). Cartes © OpenFreeMap / OpenStreetMap. Les radars mobiles ne figurent dans aucune base publique : ce sont vos signalements. Gardez l'app au premier plan, écran allumé. Restez attentif à la route.</p>
+    <button class="btn secondary" id="btnResetSettings">Réglages par défaut</button>`;
+  c.querySelectorAll('.toggle').forEach(b => b.addEventListener('click', () => { setSetting(b.dataset.k, !S[b.dataset.k]); b.classList.toggle('on', S[b.dataset.k]); afterSetting(b.dataset.k); }));
+  c.querySelectorAll('select').forEach(s => s.addEventListener('change', () => { setSetting(s.dataset.k, s.value); afterSetting(s.dataset.k); }));
+  c.querySelectorAll('input[type=number]').forEach(i => i.addEventListener('change', () => { const v = Math.max(+i.min, Math.min(+i.max, +i.value || 0)); i.value = v; setSetting(i.dataset.k, v); }));
+  c.querySelector('#btnTestVoice').addEventListener('click', () => emit('ui:testvoice'));
+  c.querySelector('#btnUpdateDb').addEventListener('click', e => emit('ui:updatedb', e.currentTarget));
+  c.querySelector('#btnResetSettings').addEventListener('click', () => { Object.assign(S, DEFAULTS); saveSettings(); openSettings(); applyTheme(); toast('Réglages réinitialisés'); });
+  open('mSettings');
+}
+function afterSetting(k) {
+  if (k === 'theme' || k === 'mapStyle') applyTheme();
+  if (k === 'keepAwake') emit('ui:wakelock');
+  if (k === 'forceAudio') emit('ui:audio');
+}
+export function setDbInfo(text) { const n = $('dbInfo'); if (n) n.textContent = text; }

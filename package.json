@@ -1,0 +1,13 @@
+{
+  "name": "vigie",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Vigie — carte GPS, vitesse et radars (base officielle data.gouv.fr)",
+  "scripts": {
+    "data": "node tools/build-radars.mjs",
+    "icons": "node tools/make-icons.mjs",
+    "test": "node tools/test-geom.mjs",
+    "serve": "npx --yes serve -l 8080 ."
+  }
+}

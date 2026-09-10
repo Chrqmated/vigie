@@ -1,0 +1,153 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <title>Vigie</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+  <meta name="description" content="Vigie — carte GPS, vitesse, kilomètres et radars (base officielle data.gouv.fr) avec alertes vocales.">
+  <meta name="theme-color" content="#0b1220">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Vigie">
+  <meta name="format-detection" content="telephone=no">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+  <link rel="stylesheet" href="vendor/maplibre-gl.css">
+  <link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+  <div id="map"></div>
+
+  <!-- barre haute -->
+  <div class="top">
+    <div class="chip" id="gpsChip"><span class="dot-gps" id="gpsDot"></span><span id="gpsText">GPS…</span></div>
+    <div class="stack">
+      <button class="iconbtn" id="btnSettings" aria-label="Réglages">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.6 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+      </button>
+      <button class="iconbtn" id="btnTheme" aria-label="Thème">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+      </button>
+    </div>
+  </div>
+
+  <!-- bandeau simulation -->
+  <div class="simbar" id="simbar"><span>Simulation en cours</span><button id="simStop">Arrêter</button></div>
+
+  <!-- carte d'alerte radar -->
+  <div class="alert" id="alert">
+    <div class="card">
+      <div class="icon" id="alertIcon"></div>
+      <div>
+        <div class="title" id="alertTitle">Radar fixe</div>
+        <div class="sub" id="alertSub">—</div>
+      </div>
+      <div class="dist"><div class="v num" id="alertDist">800</div><div class="u" id="alertUnit">m</div></div>
+      <div class="bar" id="alertBar"></div>
+    </div>
+  </div>
+
+  <!-- tronçon -->
+  <div class="section" id="section">
+    <div><div class="lbl">Tronçon · moyenne</div><div class="avg num" id="secAvg">—</div></div>
+    <div class="sign small" id="secSign">110</div>
+    <div class="rem num" id="secRem">reste 5,2 km</div>
+  </div>
+
+  <!-- tiroir bas -->
+  <div class="sheet" id="sheet">
+    <div class="handle"></div>
+    <div class="peek" id="peek">
+      <div class="speed" id="speedBox"><div class="v num" id="speedV">0</div><div class="u">km/h</div></div>
+      <div class="limit"><div class="sign unknown" id="limitSign">–</div><div class="src" id="limitSrc">limite</div></div>
+      <div class="trip"><div class="v num" id="tripKm">0,0<small>km</small></div><div class="u num" id="tripDur">0 min</div></div>
+    </div>
+    <div class="body">
+      <div class="grid4">
+        <div class="stat"><div class="v num" id="stAvg">0</div><div class="k">Moy km/h</div></div>
+        <div class="stat"><div class="v num" id="stMax">0</div><div class="k">Max km/h</div></div>
+        <div class="stat"><div class="v num" id="stOdo">0</div><div class="k">Total km</div></div>
+        <div class="stat"><div class="v num" id="stRadars">0</div><div class="k">Radars</div></div>
+      </div>
+      <div class="h"><h3>Prochains radars</h3><button id="btnNewTrip">Nouveau trajet</button></div>
+      <div class="list" id="nextList"><div class="empty">En attente de position…</div></div>
+      <div class="actions">
+        <button class="action" id="actReport"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>Signaler</button>
+        <button class="action" id="actHistory"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>Trajets</button>
+        <button class="action" id="actMine"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 21V4h12l-1 4 1 4H4"/></svg>Mes radars</button>
+        <button class="action" id="actSim"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 4l14 8-14 8z"/></svg>Simuler</button>
+      </div>
+      <div class="brand" id="brand">Vigie · base radars data.gouv.fr</div>
+    </div>
+  </div>
+
+  <!-- boutons flottants -->
+  <div class="fabs">
+    <button class="iconbtn recenter" id="btnRecenter" aria-label="Recentrer">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 11l19-9-9 19-2-8z"/></svg>
+    </button>
+    <button class="fab" id="btnReport"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>Signaler</button>
+  </div>
+
+  <div class="toast" id="toast"></div>
+
+  <!-- écran de démarrage -->
+  <div class="start" id="start">
+    <img class="logo" src="icons/icon.svg" alt="">
+    <h1>Vigie</h1>
+    <p>Carte, vitesse, kilomètres et alertes radars vocales. Base officielle du Ministère de l'Intérieur.</p>
+    <button class="go" id="btnStart">Démarrer</button>
+    <div class="stats"><div><b id="startCount">…</b>radars</div><div><b id="startVersion">…</b>base</div><div><b>FR</b>voix</div></div>
+    <div class="hint" id="startHint">Astuce : <b>Partager → Sur l'écran d'accueil</b> pour lancer Vigie en plein écran.</div>
+  </div>
+
+  <!-- ===== Modales ===== -->
+  <div class="modal" id="mSettings">
+    <div class="scrim" data-close></div>
+    <div class="panel">
+      <div class="head"><h2>Réglages</h2><button class="close" data-close><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button></div>
+      <div class="content" id="settingsContent"></div>
+    </div>
+  </div>
+
+  <div class="modal" id="mReport">
+    <div class="scrim" data-close></div>
+    <div class="panel">
+      <div class="head"><h2 id="reportTitle">Signaler un radar</h2><button class="close" data-close><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button></div>
+      <div class="content">
+        <div class="group">Type</div>
+        <div class="types" id="reportTypes"></div>
+        <div class="group">Vitesse limite</div>
+        <div class="chips" id="reportVma"></div>
+        <div class="group">Position</div>
+        <p class="note" id="reportPos">—</p>
+        <div class="btnrow" style="margin-top:14px">
+          <button class="btn danger" id="reportDelete" hidden>Supprimer</button>
+          <button class="btn" id="reportSave">Enregistrer</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal" id="mDetail">
+    <div class="scrim" data-close></div>
+    <div class="panel">
+      <div class="head"><h2>Radar</h2><button class="close" data-close><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button></div>
+      <div class="content" id="detailContent"></div>
+    </div>
+  </div>
+
+  <div class="modal" id="mList">
+    <div class="scrim" data-close></div>
+    <div class="panel">
+      <div class="head"><h2 id="listTitle">Trajets</h2><button class="close" data-close><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button></div>
+      <div class="content" id="listContent"></div>
+    </div>
+  </div>
+
+  <script src="vendor/maplibre-gl.js"></script>
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>
