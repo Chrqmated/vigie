@@ -1,6 +1,7 @@
 // Carte MapLibre : style, marqueur position, couches radars, suivi navigation, gestes
 import { S, emit } from './store.js';
 import { geojson, radars } from './radars.js';
+import * as route from './route.js';
 
 const STYLES = {
   liberty: 'https://tiles.openfreemap.org/styles/liberty',
@@ -10,7 +11,7 @@ const STYLES = {
   fiord: 'https://tiles.openfreemap.org/styles/fiord',
 };
 
-let map, marker, markerEl, haloEl, chevronEl;
+let map, marker, markerEl, haloEl, chevronEl, destMarker = null;
 let follow = true;
 let currentStyle = '';
 let activeId = null;
@@ -70,6 +71,9 @@ export function getMap() { return map; }
 
 function addLayers() {
   if (!map.style || map.getSource('radars')) return;
+  map.addSource('route', { type: 'geojson', data: route.geojson() });
+  map.addLayer({ id: 'route-casing', type: 'line', source: 'route', layout: { 'line-join': 'round', 'line-cap': 'round' }, paint: { 'line-color': '#ffffff', 'line-width': ['interpolate', ['linear'], ['zoom'], 8, 5, 14, 11, 18, 18], 'line-opacity': 0.9 } });
+  map.addLayer({ id: 'route-line', type: 'line', source: 'route', layout: { 'line-join': 'round', 'line-cap': 'round' }, paint: { 'line-color': '#2f7cf6', 'line-width': ['interpolate', ['linear'], ['zoom'], 8, 3, 14, 7, 18, 12] } });
   map.addSource('radars', { type: 'geojson', data: geojson(), cluster: true, clusterMaxZoom: 10, clusterRadius: 46 });
   map.addLayer({ id: 'radars-cluster', type: 'circle', source: 'radars', filter: ['has', 'point_count'],
     paint: { 'circle-color': '#2f7cf6', 'circle-radius': ['step', ['get', 'point_count'], 14, 10, 18, 50, 22, 200, 26], 'circle-stroke-width': 3, 'circle-stroke-color': 'rgba(255,255,255,0.9)', 'circle-opacity': 0.9 } });
@@ -79,8 +83,8 @@ function addLayers() {
     paint: { 'circle-radius': 18, 'circle-color': '#ef4444', 'circle-opacity': 0.25, 'circle-stroke-width': 2, 'circle-stroke-color': '#ef4444', 'circle-stroke-opacity': 0.6 } });
   map.addLayer({ id: 'radars-pt', type: 'symbol', source: 'radars', filter: ['!', ['has', 'point_count']],
     layout: { 'icon-image': ['get', 'icon'], 'icon-size': ['interpolate', ['linear'], ['zoom'], 9, 0.55, 13, 0.8, 16, 1], 'icon-allow-overlap': true, 'icon-ignore-placement': true, 'icon-anchor': 'center' } });
-  map.addSource('route-hint', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
   if (activeId) setActive(activeId);
+  refreshRoute();
 }
 
 let pendingRefresh = false;
@@ -91,6 +95,28 @@ export function refreshRadars() {
   if (src) { src.setData(geojson()); return; }
   if (map.isStyleLoaded()) { try { addLayers(); } catch (e) { console.warn('addLayers', e); } }
   else if (!pendingRefresh) { pendingRefresh = true; map.once('load', () => { pendingRefresh = false; refreshRadars(); }); }
+}
+
+export function refreshRoute() {
+  let src = null;
+  try { src = map && map.getSource('route'); } catch { src = null; }
+  if (src) src.setData(route.geojson());
+  const d = route.route.dest;
+  if (d && route.isActive()) {
+    if (!destMarker) {
+      const el = document.createElement('div');
+      el.innerHTML = '<svg width="34" height="44" viewBox="0 0 34 44"><path d="M17 43 C17 43 3 26 3 15 A14 14 0 0 1 31 15 C31 26 17 43 17 43Z" fill="#ef4444" stroke="#fff" stroke-width="2.5"/><circle cx="17" cy="15" r="5.5" fill="#fff"/></svg>';
+      el.style.filter = 'drop-shadow(0 3px 6px rgba(0,0,0,.35))';
+      destMarker = new maplibregl.Marker({ element: el, anchor: 'bottom' });
+    }
+    destMarker.setLngLat([d.lon, d.lat]).addTo(map);
+  } else if (destMarker) { destMarker.remove(); }
+}
+
+export function fitRoute() {
+  if (!map || !route.isActive()) return;
+  setFollow(false);
+  map.fitBounds(route.bounds(), { padding: { top: 120, bottom: 200, left: 40, right: 40 }, pitch: 0, bearing: 0, duration: 900, maxZoom: 15 });
 }
 
 export function setStyle(theme) {

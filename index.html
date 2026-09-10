@@ -24,6 +24,9 @@
   <div class="top">
     <div class="chip" id="gpsChip"><span class="dot-gps" id="gpsDot"></span><span id="gpsText">GPS…</span></div>
     <div class="stack">
+      <button class="iconbtn accent" id="btnRoute" aria-label="Itinéraire">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>
+      </button>
       <button class="iconbtn" id="btnSettings" aria-label="Réglages">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.6 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
       </button>
@@ -71,7 +74,7 @@
         <div class="stat"><div class="v num" id="stOdo">0</div><div class="k">Total km</div></div>
         <div class="stat"><div class="v num" id="stRadars">0</div><div class="k">Radars</div></div>
       </div>
-      <div class="h"><h3>Prochains radars</h3><button id="btnNewTrip">Nouveau trajet</button></div>
+      <div class="h"><h3 id="nextTitle">Prochains radars</h3><button id="btnNewTrip">Nouveau trajet</button></div>
       <div class="list" id="nextList"><div class="empty">En attente de position…</div></div>
       <div class="actions">
         <button class="action" id="actReport"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>Signaler</button>
@@ -81,6 +84,13 @@
       </div>
       <div class="brand" id="brand">Vigie · base radars data.gouv.fr</div>
     </div>
+  </div>
+
+  <!-- bandeau itinéraire -->
+  <div class="routebar" id="routebar">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 21V4h12l-1 4 1 4H4"/></svg>
+    <div class="rb"><div class="rb-main num" id="rbMain">—</div><div class="rb-sub" id="rbSub">—</div></div>
+    <button class="rb-close" id="rbStop" aria-label="Arrêter l'itinéraire"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
   </div>
 
   <!-- boutons flottants -->
@@ -127,6 +137,21 @@
           <button class="btn danger" id="reportDelete" hidden>Supprimer</button>
           <button class="btn" id="reportSave">Enregistrer</button>
         </div>
+        <button class="btn secondary" id="reportGo" hidden>Itinéraire jusqu'à ce point</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal" id="mRoute">
+    <div class="scrim" data-close></div>
+    <div class="panel">
+      <div class="head"><h2>Itinéraire</h2><button class="close" data-close><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button></div>
+      <div class="content">
+        <div class="search"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg><input type="search" id="routeQ" placeholder="Adresse, ville, lieu…" autocomplete="off" autocorrect="off" spellcheck="false" enterkeyhint="search"></div>
+        <div class="list" id="routeResults"></div>
+        <div class="h" id="recentsHead"><h3>Récents</h3><button id="recentsClear">Effacer</button></div>
+        <div class="list" id="routeRecents"></div>
+        <p class="note">Avec un itinéraire actif, seuls les radars <b>situés sur votre trajet</b> déclenchent une alerte, avec la distance réelle par la route. Recalcul automatique si vous quittez l'itinéraire. Calcul par OSRM / OpenStreetMap.</p>
       </div>
     </div>
   </div>

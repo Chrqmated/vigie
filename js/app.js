@@ -10,6 +10,8 @@ import * as osm from './osm.js';
 import * as map from './map.js';
 import * as ui from './ui.js';
 import * as sim from './sim.js';
+import * as route from './route.js';
+import { fmtKm, fmtDuration } from './geom.js';
 import { createEngine } from './alerts.js';
 
 const engine = createEngine(S, handleEngineEvent);
@@ -69,18 +71,60 @@ on('fix', fix => {
   ui.setSpeed(kmh);
   ui.setGps(fix.quality, fix.quality === 'ok' ? 'GPS' : fix.quality === 'weak' ? `GPS ±${Math.round(fix.acc)} m` : 'GPS faible');
 
-  const cands = radars.near(fix.lat, fix.lon, 2500);
+  window.__vigiePos = { lat: fix.lat, lon: fix.lon };
+
+  // itinéraire : projection, hors-route, arrivée
+  let nav = null;
+  if (route.isActive()) {
+    nav = route.update(fix);
+    ui.setRoute({ ...nav, name: route.route.dest.name, rerouting: route.route.rerouting });
+    if (nav.arrived) { onArrived(); nav = null; }
+    else if (nav.needReroute && !fix.sim) doReroute(fix);
+  }
+  const useRoute = nav && S.routeOnly && !nav.offRoute;
+
+  const cands = useRoute ? route.candidates(fix) : radars.near(fix.lat, fix.lon, 2500);
   engine.update(fix, cands);
   osm.update(fix);
 
   const now = Date.now();
   if (now - lastNextUpdate > 2000) {
     lastNextUpdate = now;
-    const far = radars.near(fix.lat, fix.lon, 5000);
-    const ahead = far.filter(c => fix.heading == null || angleDiff(fix.heading, c.brg) <= 45).slice(0, 3);
-    ui.setNext(ahead);
+    if (useRoute) ui.setNext(route.nextOnRoute(3));
+    else {
+      const far = radars.near(fix.lat, fix.lon, 5000);
+      ui.setNext(far.filter(c => fix.heading == null || angleDiff(fix.heading, c.brg) <= 45).slice(0, 3));
+    }
   }
 });
+
+// ---------------------------------------------------------------- itinéraire
+on('route', () => map.refreshRoute());
+on('ui:routeto', async dest => {
+  const f = geo.geo.last;
+  if (!f) { ui.toast('Position GPS inconnue, réessayez dans un instant'); return; }
+  ui.toast('Calcul de l’itinéraire…', 8000);
+  try {
+    const r = await route.start(dest, { lat: f.lat, lon: f.lon });
+    engine.reset(); activeId = null; ui.hideAlert();
+    const n = r.onRoute.length;
+    ui.toast(`${fmtKm(r.total, 0)} km · ${fmtDuration(r.duration * 1000)} · ${n} radar${n > 1 ? 's' : ''} sur le trajet`, 5000);
+    audio.chime();
+    audio.speak(`Itinéraire calculé : ${Math.round(r.total / 1000)} kilomètres, ${fmtDuration(r.duration * 1000).replace('h', ' heures ')}. ${n ? n + ' radar' + (n > 1 ? 's' : '') + ' sur le trajet.' : 'Aucun radar sur le trajet.'}`, { priority: true });
+    ui.setRoute({ remaining: r.total, etaSec: r.duration, offRoute: false, name: dest.name });
+    route.update(f); ui.setNext(route.nextOnRoute(3)); ui.setNextTitle(true);
+    map.fitRoute();
+    setTimeout(() => { if (route.isActive()) map.setFollow(true); }, 4500);
+  } catch (e) { console.warn(e); ui.toast('Itinéraire introuvable (' + (e.message || 'réseau') + ')', 4000); }
+});
+on('ui:routestop', () => { stopRoute(); ui.toast('Itinéraire arrêté'); });
+function stopRoute() { route.stop(); ui.setRoute(null); ui.setNextTitle(false); engine.reset(); activeId = null; ui.hideAlert(); }
+function onArrived() { audio.ok(); audio.speak('Vous êtes arrivé à destination', { priority: true }); stopRoute(); ui.toast('Arrivé à destination'); }
+async function doReroute(fix) {
+  audio.speak('Recalcul de l’itinéraire');
+  const ok = await route.reroute(fix);
+  if (ok) { engine.reset(); activeId = null; ui.hideAlert(); const n = route.route.onRoute.length; ui.toast(`Nouvel itinéraire · ${n} radar${n > 1 ? 's' : ''}`); }
+}
 on('geo:error', msg => { ui.setGps('bad', 'GPS indisponible'); ui.toast(msg, 5000); });
 osm.onLimit(l => { engine.setOsmLimit(l); });
 

@@ -45,6 +45,18 @@ export function distToSegment(lat, lon, aLat, aLon, bLat, bLon) {
   return Math.sqrt(dx * dx + dy * dy) * D2R * R;
 }
 
+/** Projection d'un point sur un segment : { d: distance (m), t: position 0..1 le long du segment } */
+export function projectToSegment(lat, lon, aLat, aLon, bLat, bLon) {
+  const k = Math.cos(lat * D2R);
+  const px = (lon - aLon) * k, py = lat - aLat;
+  const bx = (bLon - aLon) * k, by = bLat - aLat;
+  const l2 = bx * bx + by * by;
+  let t = l2 ? (px * bx + py * by) / l2 : 0;
+  t = Math.max(0, Math.min(1, t));
+  const dx = px - t * bx, dy = py - t * by;
+  return { d: Math.sqrt(dx * dx + dy * dy) * D2R * R, t };
+}
+
 /** Vrai si le radar est "devant" : écart entre cap et relèvement ≤ cone (deg) */
 export function isAhead(heading, brg, cone = 35) {
   if (heading == null || !isFinite(heading)) return true;

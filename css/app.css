@@ -234,6 +234,33 @@ svg { display: block; }
 .action:active { background: var(--accent-soft); }
 .brand { text-align: center; margin: 18px 0 4px; font-size: 11px; color: var(--text-3); }
 
+/* --------------------------------------------------------------- route bar */
+.routebar {
+  position: absolute; left: calc(var(--sal) + 12px); bottom: calc(var(--sab) + var(--peek) + 24px); z-index: 6;
+  display: none; align-items: center; gap: 10px; height: 52px; padding: 0 6px 0 14px; border-radius: 999px; max-width: calc(100% - 175px);
+  background: var(--surface); -webkit-backdrop-filter: var(--blur); backdrop-filter: var(--blur); box-shadow: var(--shadow-sm); border: 1px solid var(--border);
+  transition: opacity .3s;
+}
+.routebar.show { display: flex; }
+.sheet.open ~ .routebar { opacity: 0; pointer-events: none; }
+.routebar > svg { width: 20px; height: 20px; color: var(--danger); flex: none; }
+.routebar .rb { min-width: 0; }
+.routebar .rb-main { font-family: var(--font-display); font-weight: 800; font-size: 16px; letter-spacing: -.02em; white-space: nowrap; }
+.routebar .rb-sub { font-size: 11px; color: var(--text-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.routebar .rb-close { width: 38px; height: 38px; border-radius: 50%; background: var(--surface-2); display: grid; place-items: center; color: var(--text-2); flex: none; }
+.routebar .rb-close svg { width: 16px; height: 16px; }
+.routebar.off .rb-main { color: var(--warn); }
+
+/* recherche */
+.search { display: flex; align-items: center; gap: 10px; background: var(--surface-2); border-radius: 14px; padding: 0 14px; height: 50px; margin-top: 6px; }
+.search svg { width: 20px; height: 20px; color: var(--text-3); flex: none; }
+.search input { flex: 1; min-width: 0; background: none; border: 0; outline: none; font-size: 16px; font-weight: 600; -webkit-appearance: none; appearance: none; -webkit-user-select: text; user-select: text; }
+.search input::-webkit-search-cancel-button { -webkit-appearance: none; }
+#routeResults { margin-top: 10px; }
+.row .pin { width: 44px; height: 44px; border-radius: 50%; background: var(--accent-soft); display: grid; place-items: center; color: var(--accent); }
+.row .pin svg { width: 22px; height: 22px; }
+.row.loading { justify-content: center; grid-template-columns: 1fr; color: var(--text-3); text-align: center; }
+
 /* --------------------------------------------------------------- floating buttons */
 .fabs { position: absolute; right: calc(var(--sar) + 12px); bottom: calc(var(--sab) + var(--peek) + 20px); z-index: 6; display: flex; flex-direction: column; gap: 12px; align-items: flex-end; transition: opacity .3s; }
 .sheet.open ~ .fabs { opacity: 0; pointer-events: none; }

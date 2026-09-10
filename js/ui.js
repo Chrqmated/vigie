@@ -5,6 +5,7 @@ import { fmtDist, fmtKm, fmtDuration } from './geom.js';
 import * as trip from './trip.js';
 import * as custom from './custom.js';
 import * as map from './map.js';
+import * as route from './route.js';
 
 const $ = id => document.getElementById(id);
 const el = {};
@@ -48,6 +49,10 @@ export function init() {
   $('actSim').addEventListener('click', () => { closeSheet(); emit('ui:sim'); });
   $('btnNewTrip').addEventListener('click', () => { trip.newTrip(); toast('Nouveau trajet démarré'); });
   el.simStop.addEventListener('click', () => emit('ui:simstop'));
+  $('btnRoute').addEventListener('click', openRoute);
+  $('rbStop').addEventListener('click', () => emit('ui:routestop'));
+  $('routebar').addEventListener('click', e => { if (!e.target.closest('#rbStop')) map.fitRoute(); });
+  initRouteSearch();
   el.alert.addEventListener('click', () => { const a = el.alert.dataset.id; if (a) openDetail(radars.byId.get(a)); });
 
   on('trip', renderTrip);
@@ -123,8 +128,9 @@ function renderTrip(t) {
   el.stOdo.textContent = fmtKm(t.odometer, t.odometer < 100000 ? 1 : 0);
 }
 
+export function setNextTitle(onRoute) { $('nextTitle').textContent = onRoute ? 'Radars sur le trajet' : 'Prochains radars'; }
 export function setNext(list) {
-  if (!list.length) { el.nextList.innerHTML = '<div class="empty">Aucun radar devant vous dans les 5 km</div>'; return; }
+  if (!list.length) { el.nextList.innerHTML = `<div class="empty">${route.isActive() ? 'Aucun radar sur le reste du trajet' : 'Aucun radar devant vous dans les 5 km'}</div>`; return; }
   el.nextList.innerHTML = list.map(({ r, d }) => {
     const f = fmtDist(d);
     return `<button class="row" data-id="${r.id}">${signHtml(r, 'small')}<div><div class="t">${TYPES[r.type]?.label || r.type}</div><div class="s">${subtitle(r)}</div></div><div class="d num">${f.v}<small>${f.u}</small></div></button>`;
@@ -243,6 +249,8 @@ export function openReport({ lat, lon, existing = null, fromPosition = false }) 
     map.refreshRadars(); close('mReport');
   };
   $('reportDelete').onclick = () => { custom.remove(existing.id); map.refreshRadars(); toast('Radar supprimé'); close('mReport'); };
+  const go = $('reportGo'); go.hidden = fromPosition || !!existing;
+  go.onclick = () => { close('mReport'); emit('ui:routeto', { name: 'Point sur la carte', sub: `${lat.toFixed(4)}, ${lon.toFixed(4)}`, lat, lon }); };
   open('mReport');
 }
 
@@ -284,6 +292,7 @@ const SCHEMA = [
   ['onlyAhead', 'toggle', 'Seulement les radars devant', 'Ignore ceux hors de votre cap (±35°)'],
   ['overspeedAlert', 'toggle', 'Alerte dépassement', 'Petit son toutes les 15 s au-dessus de la limite'],
   ['tolerance', 'number', 'Tolérance (km/h)', 'Marge avant de passer au rouge', { min: 0, max: 20, step: 1 }],
+  ['routeOnly', 'toggle', 'Itinéraire : radars du trajet seulement', 'Avec un itinéraire actif, ignore les radars qui ne sont pas sur la route'],
   ['dangerZone', 'toggle', 'Mode zone de danger', 'Alerte « zone de contrôle » à 2 km sans distance précise, façon assistant d\'aide à la conduite'],
   ['Carte'],
   ['mapStyle', 'select', 'Style de carte', '', [['auto', 'Auto (jour / nuit)'], ['liberty', 'Liberty'], ['bright', 'Bright'], ['positron', 'Positron'], ['dark', 'Dark'], ['fiord', 'Fiord']]],
@@ -326,3 +335,50 @@ function afterSetting(k) {
   if (k === 'forceAudio') emit('ui:audio');
 }
 export function setDbInfo(text) { const n = $('dbInfo'); if (n) n.textContent = text; }
+
+// ---------------------------------------------------------------- itinéraire
+const PIN = '<div class="pin"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s7-7.1 7-12a7 7 0 1 0-14 0c0 4.9 7 12 7 12z"/><circle cx="12" cy="10" r="2.5"/></svg></div>';
+let searchTimer = 0, searchSeq = 0;
+function initRouteSearch() {
+  const q = $('routeQ');
+  q.addEventListener('input', () => { clearTimeout(searchTimer); searchTimer = setTimeout(() => runSearch(q.value), 320); });
+  q.addEventListener('keydown', e => { if (e.key === 'Enter') { clearTimeout(searchTimer); runSearch(q.value); q.blur(); } });
+  $('recentsClear').addEventListener('click', () => { localStorage.removeItem('vigie.recents'); renderRecents(); });
+}
+async function runSearch(text) {
+  const box = $('routeResults');
+  if (text.trim().length < 2) { box.innerHTML = ''; return; }
+  const seq = ++searchSeq;
+  box.innerHTML = '<div class="row loading">Recherche…</div>';
+  let res = [];
+  try { res = await route.geocode(text, window.__vigiePos || null); } catch { res = []; }
+  if (seq !== searchSeq) return;
+  if (!res.length) { box.innerHTML = '<div class="empty">Aucun résultat</div>'; return; }
+  box.innerHTML = res.map((r, i) => `<button class="row" data-i="${i}">${PIN}<div><div class="t">${esc(r.name)}</div><div class="s">${esc(r.sub)}</div></div><div></div></button>`).join('');
+  box.querySelectorAll('.row').forEach(b => b.addEventListener('click', () => { close('mRoute'); emit('ui:routeto', res[+b.dataset.i]); }));
+}
+function renderRecents() {
+  const list = route.recents();
+  $('recentsHead').hidden = !list.length;
+  $('routeRecents').innerHTML = list.map((r, i) => `<button class="row" data-i="${i}">${PIN}<div><div class="t">${esc(r.name)}</div><div class="s">${esc(r.sub)}</div></div><div></div></button>`).join('');
+  $('routeRecents').querySelectorAll('.row').forEach(b => b.addEventListener('click', () => { close('mRoute'); emit('ui:routeto', list[+b.dataset.i]); }));
+}
+export function openRoute() {
+  $('routeQ').value = ''; $('routeResults').innerHTML = '';
+  renderRecents();
+  open('mRoute');
+  setTimeout(() => $('routeQ').focus(), 350);
+}
+function esc(s) { return String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
+
+/** Bandeau de navigation : { remaining, etaSec, offRoute, name } ou null */
+export function setRoute(info) {
+  const bar = $('routebar');
+  if (!info) { bar.classList.remove('show'); return; }
+  bar.classList.add('show'); bar.classList.toggle('off', !!info.offRoute);
+  if (info.offRoute) { $('rbMain').textContent = info.rerouting ? 'Recalcul…' : 'Hors itinéraire'; $('rbSub').textContent = info.name; return; }
+  const km = fmtKm(info.remaining, info.remaining < 10000 ? 1 : 0);
+  const eta = new Date(Date.now() + info.etaSec * 1000).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
+  $('rbMain').textContent = `${km} km · ${fmtDuration(info.etaSec * 1000)}`;
+  $('rbSub').textContent = `Arrivée ${eta} · ${info.name}`;
+}

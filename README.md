@@ -21,6 +21,7 @@ Conseils : gardez l'app au premier plan, écran allumé (elle s'en charge). Le b
 - Alertes anticipées selon la vitesse (25 s avant, bornées 300 m – 1,5 km), carillon, voix française, double bip à 300 m, « Ralentissez » en cas d'excès.
 - Radars tronçon : annonce de la longueur, **vitesse moyenne en direct**, fin de tronçon.
 - Signalement : radar mobile (expire automatiquement), fixe absent, feu rouge, danger ; appui long sur la carte pour placer ; export / import JSON.
+- **Itinéraire** : recherche d'adresse ou de lieu (Photon + Base Adresse Nationale), calcul OSRM (secours Valhalla), tracé sur la carte, distance restante et heure d'arrivée. Avec un itinéraire actif, **seuls les radars situés sur le trajet** déclenchent une alerte, avec la distance réelle par la route ; recalcul automatique si vous quittez l'itinéraire, annonce d'arrivée. Appui long sur la carte → « Itinéraire jusqu'à ce point ».
 - Mise à jour de la base radars depuis data.gouv.fr directement dans l'app.
 - Mode simulation pour tester voix et alertes sans rouler.
 - Fonctionne hors connexion (hors tuiles non encore vues).
@@ -30,7 +31,7 @@ Conseils : gardez l'app au premier plan, écran allumé (elle s'en charge). Le b
 ```bash
 npm run data     # régénère data/radars.json depuis data.gouv.fr
 npm run icons    # régénère les icônes PNG
-npm test         # tests géométrie + moteur d'alertes (trajets simulés)
+npm test         # tests géométrie + moteur d'alertes + itinéraire (réseau requis)
 npm run serve    # serveur local http://localhost:8080
 ```
 
@@ -46,6 +47,7 @@ Vanilla HTML / CSS / JS (modules ES), MapLibre GL JS embarqué dans `vendor/`. A
 ## Limites connues
 
 - iOS n'exécute pas les web-apps en arrière-plan : pas d'alerte écran éteint ou app masquée.
-- L'État ne publie pas le sens de contrôle exploitable automatiquement : un radar qui flashe le sens opposé peut vous alerter.
+- L'État ne publie pas le sens de contrôle exploitable automatiquement : un radar qui flashe le sens opposé peut vous alerter (y compris sur itinéraire, les deux chaussées d'une autoroute étant à moins de 35 m).
+- Le calcul d'itinéraire utilise les serveurs de démonstration OSRM / Valhalla (gratuits, sans garantie de disponibilité).
 - Les radars mobiles et voitures-radars ne figurent dans aucune base publique.
 - Restez attentif à la route ; cette app est une aide, pas un dispositif homologué.

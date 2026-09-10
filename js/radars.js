@@ -28,8 +28,8 @@ export function toRadar(row) {
   return { id: String(id), type, lat, lon, vma: vma || 0, sens: sens || '', route: route || '', commune: commune || '', len: len || 0, mes: mes || '', user: false };
 }
 
-export async function load() {
-  let data = get('radarsData', null); // base mise à jour par l'utilisateur
+export async function load(preloaded = null) {
+  let data = preloaded || get('radarsData', null); // base mise à jour par l'utilisateur
   if (!data) {
     const res = await fetch('./data/radars.json', { cache: 'force-cache' });
     data = await res.json();

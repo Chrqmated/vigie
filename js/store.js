@@ -38,6 +38,7 @@ export const DEFAULTS = {
   pitch: true,
   autoZoom: true,
   showAllRadars: true,
+  routeOnly: true,          // avec itinéraire : n'alerter que les radars du trajet
 };
 let settings = Object.assign({}, DEFAULTS, get('settings', {}));
 export const S = settings;
