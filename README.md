@@ -21,7 +21,7 @@ Conseils : gardez l'app au premier plan, écran allumé (elle s'en charge). Le b
 - Alertes anticipées selon la vitesse (25 s avant, bornées 300 m – 1,5 km), carillon, voix française, double bip à 300 m, « Ralentissez » en cas d'excès.
 - Radars tronçon : annonce de la longueur, **vitesse moyenne en direct**, fin de tronçon.
 - Signalement : radar mobile (expire automatiquement), fixe absent, feu rouge, danger ; appui long sur la carte pour placer ; export / import JSON.
-- **Itinéraire façon Waze** : recherche d'adresse ou de lieu (Photon + Base Adresse Nationale), jusqu'à 3 propositions (le plus rapide, alternative, moins de radars) avec durée, heure d'arrivée, **coût du péage** (estimation ≈ 0,11 €/km d'autoroute, réglable) et **coût du carburant** (prix moyen national en direct, SP98 par défaut, consommation réglable), nombre de radars sur le trajet. Options « Éviter les péages » et « Éviter les radars » (recalcul en excluant les radars du trajet). Guidage visuel des manœuvres (vocal en option), bandeau arrivée / durée / km / coût, recalcul automatique hors route. Avec un itinéraire actif, **seuls les radars situés sur le trajet** déclenchent une alerte, avec la distance réelle par la route. Calcul par Valhalla (secours OSRM).
+- **Itinéraire façon Waze** : recherche d'adresse ou de lieu (Photon + Base Adresse Nationale), jusqu'à 3 propositions (le plus rapide, alternative, moins de radars) avec durée, heure d'arrivée, **coût du péage** (prix exact entrée-sortie via les grilles OpenTollData sur les réseaux ASF, APRR, AREA ; estimation ≈ 0,11 €/km réglable ailleurs, notamment Sanef/SAPN) et **coût du carburant** (prix moyen national en direct, SP98 par défaut, consommation réglable), nombre de radars sur le trajet. Options « Éviter les péages » et « Éviter les radars » (recalcul en excluant les radars du trajet). Guidage visuel des manœuvres (vocal en option), bandeau arrivée / durée / km / coût, recalcul automatique hors route. Avec un itinéraire actif, **seuls les radars situés sur le trajet** déclenchent une alerte, avec la distance réelle par la route. Calcul par Valhalla (secours OSRM).
 - **Domicile, Travail, favoris** et récents dans la recherche ; **étapes intermédiaires** (« + Étape ») ; **stations les moins chères** sur le trajet (prix en direct, détour estimé, ajout en étape d'un tap) ou autour de vous.
 - **Reprise d'itinéraire** après fermeture de l'app (sauvegarde locale, proposition au démarrage), **partage de l'heure d'arrivée** (SMS, WhatsApp…), radars à contresens écartés grâce au champ « sens » de la base 2018.
 - **Annonce vocale des limitations** (« Limité à 50 ») à chaque changement de zone, en plus des alertes radars.
@@ -36,6 +36,7 @@ Conseils : gardez l'app au premier plan, écran allumé (elle s'en charge). Le b
 ```bash
 npm run data     # régénère data/radars.json depuis data.gouv.fr
 npm run icons    # régénère les icônes PNG
+npm run tolls    # régénère data/tolls.json depuis OpenTollData
 npm test         # tests géométrie + moteur d'alertes + itinéraire (réseau requis)
 npm run serve    # serveur local http://localhost:8080
 ```
@@ -47,12 +48,13 @@ Vanilla HTML / CSS / JS (modules ES), MapLibre GL JS embarqué dans `vendor/`. A
 - [Liste des radars fixes en France](https://www.data.gouv.fr/datasets/liste-des-radars-fixes-en-france) — Ministère de l'Intérieur, Licence Ouverte 2.0 (position, type, VMA).
 - [Radars automatiques](https://www.data.gouv.fr/datasets/radars-automatiques) (2018) — route, sens, commune, longueur des tronçons, fusionnés par proximité.
 - Limites de vitesse : OpenStreetMap via Overpass (couverture partielle).
+- Péages : [OpenTollData](https://github.com/louis2038/OpenTollData) (ODbL), grilles classe 1 des concessionnaires.
 - Cartes : © [OpenFreeMap](https://openfreemap.org) © [OpenMapTiles](https://openmaptiles.org) © [OpenStreetMap](https://www.openstreetmap.org/copyright).
 
 ## Limites connues
 
 - iOS n'exécute pas les web-apps en arrière-plan : pas d'alerte écran éteint ou app masquée.
 - L'État ne publie pas le sens de contrôle exploitable automatiquement : un radar qui flashe le sens opposé peut vous alerter (y compris sur itinéraire, les deux chaussées d'une autoroute étant à moins de 35 m).
-- Le calcul d'itinéraire utilise les serveurs publics Valhalla / OSRM (gratuits, sans garantie de disponibilité). Les coûts de péage sont une estimation au kilomètre, pas le tarif exact de chaque concession.
+- Le calcul d'itinéraire utilise les serveurs publics Valhalla / OSRM (gratuits, sans garantie de disponibilité). Le péage est exact (grille classe 1) quand le trajet emprunte un réseau couvert par [OpenTollData](https://github.com/louis2038/OpenTollData) (ASF, APRR, AREA, partiellement A'liénor et Cofiroute) ; sinon il est estimé au kilomètre et affiché avec « ≈ ». Les grilles évoluent chaque année : `npm run tolls` régénère `data/tolls.json`.
 - Les radars mobiles et voitures-radars ne figurent dans aucune base publique.
 - Restez attentif à la route ; cette app est une aide, pas un dispositif homologué.

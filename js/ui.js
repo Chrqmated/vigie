@@ -479,7 +479,7 @@ function renderPlan() {
   $('planList').innerHTML = list.map(r => {
     const eta = new Date(Date.now() + r.duration * 1000).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
     const tags = [];
-    tags.push(r.hasToll ? `<span class="tag warn">${ICON_TOLL}≈ ${euro(r.tollCost)} péage</span>` : `<span class="tag good">${ICON_TOLL}Sans péage</span>`);
+    tags.push(r.hasToll ? `<span class="tag warn">${ICON_TOLL}${r.tollExact ? '' : '≈ '}${euro(r.tollCost)} péage</span>` : `<span class="tag good">${ICON_TOLL}Sans péage</span>`);
     tags.push(`<span class="tag">${ICON_FUEL}≈ ${euro(r.fuelCost)} ${fuel.FUELS[S.fuelType] || 'carburant'}</span>`);
     tags.push(r.radars ? `<span class="tag ${r.radars > 3 ? 'bad' : 'warn'}">${ICON_CAM}${r.radars} radar${r.radars > 1 ? 's' : ''}</span>` : `<span class="tag good">${ICON_CAM}0 radar</span>`);
     return `<button class="plan-card ${r === planSel ? 'on' : ''}" data-id="${r.id}">
@@ -491,7 +491,7 @@ function renderPlan() {
   $('planGo').disabled = !planSel;
   $('planGo').textContent = planSel ? `Démarrer · ${fmtDuration(planSel.duration * 1000)}` : 'Démarrer';
   const tot = planSel ? planSel.tollCost + planSel.fuelCost : 0;
-  $('planNote').textContent = planSel ? `Coût estimé ≈ ${euro(tot)} (carburant ${fuel.price().toFixed(3).replace('.', ',')} €/L, ${fuel.source()} ; péage ≈ ${(S.tollRate ?? 0.11).toFixed(2).replace('.', ',')} €/km).` : '';
+  $('planNote').textContent = planSel ? `Coût ${planSel.tollExact || !planSel.hasToll ? '' : 'estimé '}≈ ${euro(tot)} · carburant ${fuel.price().toFixed(3).replace('.', ',')} €/L (${fuel.source()})` + (planSel.hasToll ? (planSel.tollExact ? ` · péage exact : ${planSel.tollDetail.map(d => (d.to ? d.from + ' → ' + d.to : d.from) + ' ' + euro(d.price)).join(', ')}` : ` · péage estimé ${(S.tollRate ?? 0.11).toFixed(2).replace('.', ',')} €/km (réseau non couvert par les grilles)`) : '') : '';
   if (planSel) map.showPlan(list, planSel);
   loadPlanStations(planSel);
 }
@@ -539,7 +539,7 @@ export function setNav(info) {
     $('nsKm').textContent = `${fmtKm(info.remaining, info.remaining < 10000 ? 1 : 0)} km · ${r.dest?.name || ''}`;
   }
   $('nsCost').textContent = '≈ ' + euro((r.tollCost || 0) + (r.fuelCost || 0));
-  $('nsCostSub').textContent = r.hasToll ? `péage ${euro(r.tollCost)} + ${fuel.FUELS[S.fuelType] || 'carburant'}` : `sans péage · ${fuel.FUELS[S.fuelType] || 'carburant'}`;
+  $('nsCostSub').textContent = r.hasToll ? `péage ${r.tollExact ? '' : '≈ '}${euro(r.tollCost)} + ${fuel.FUELS[S.fuelType] || 'carburant'}` : `sans péage · ${fuel.FUELS[S.fuelType] || 'carburant'}`;
 }
 
 // icônes de manœuvre (types Valhalla)

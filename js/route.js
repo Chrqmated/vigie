@@ -5,6 +5,7 @@ import { distance, bearing, projectToSegment, angleDiff, destination } from './g
 import { near } from './radars.js';
 import { get, set, del, emit, S } from './store.js';
 import * as fuel from './fuel.js';
+import * as tolls from './tolls.js';
 
 const ON_ROUTE_M = 35;        // distance max radar ↔ tracé pour être « sur le trajet »
 const OFF_ROUTE_M = 80;       // au-delà : hors itinéraire
@@ -182,7 +183,8 @@ async function enrich(r) {
   r.onRoute = radarsOnRoute(r.coords, r.cum);
   if (S.filterOpposite !== false) await dropOpposite(r);
   r.radars = r.onRoute.length;
-  r.tollCost = r.tollKm / 1000 * (S.tollRate ?? 0.11);
+  const t = tolls.compute(r.coords, r.cum, r.tollKm, S.tollRate ?? 0.11, r.maneuvers);
+  r.tollCost = t.cost; r.tollExact = t.exact; r.tollDetail = t.detail;
   const price = fuel.price();
   r.fuelPrice = price;
   r.fuelLiters = r.total / 1000 * (S.consumption ?? 7) / 100;
@@ -195,7 +197,7 @@ async function enrich(r) {
  * opts : { avoidTolls, avoidRadars }
  */
 export async function plan(from, to, opts = {}) {
-  await fuel.load().catch(() => {});
+  await Promise.all([fuel.load().catch(() => {}), tolls.load().catch(() => {})]);
   let routes;
   try { routes = await valhalla(from, to, { ...opts, alternates: true }); }
   catch (e) { console.warn('Valhalla', e); routes = await osrm(from, to, opts); }
@@ -239,7 +241,7 @@ function labelFor(r, all) {
 export function start(dest, r, opts = {}) {
   Object.assign(state, {
     active: true, dest, via: (opts.via || []).map(v => ({ ...v, passed: false })), opts, coords: r.coords, cum: r.cum, total: r.total, duration: r.duration, maneuvers: r.maneuvers || [],
-    tollKm: r.tollKm, tollCost: r.tollCost, fuelCost: r.fuelCost, onRoute: r.onRoute, hasToll: r.hasToll,
+    tollKm: r.tollKm, tollCost: r.tollCost, tollExact: !!r.tollExact, tollDetail: r.tollDetail || [], fuelCost: r.fuelCost, onRoute: r.onRoute, hasToll: r.hasToll,
     lastIdx: 0, userS: 0, offSince: 0, rerouting: false, arrived: false, startedAt: Date.now(),
   });
   remember(dest);
@@ -257,7 +259,7 @@ export function stop() {
 // ---------------------------------------------------------------- sauvegarde / reprise
 function persist() {
   try {
-    set('savedRoute', { ts: Date.now(), dest: state.dest, via: state.via, opts: state.opts, coords: state.coords, total: state.total, duration: state.duration, maneuvers: state.maneuvers, tollKm: state.tollKm, tollCost: state.tollCost, fuelCost: state.fuelCost, hasToll: state.hasToll, userS: state.userS });
+    set('savedRoute', { ts: Date.now(), dest: state.dest, via: state.via, opts: state.opts, coords: state.coords, total: state.total, duration: state.duration, maneuvers: state.maneuvers, tollKm: state.tollKm, tollCost: state.tollCost, tollExact: state.tollExact, tollDetail: state.tollDetail, fuelCost: state.fuelCost, hasToll: state.hasToll, userS: state.userS });
   } catch { /* quota */ }
 }
 export function saveProgress() { if (isActive()) persist(); }
@@ -270,7 +272,7 @@ export function saved() {
 export function resume() {
   const s = saved(); if (!s) return null;
   const cum = withCum(s.coords);
-  const r = { coords: s.coords, cum, total: s.total, duration: s.duration, maneuvers: s.maneuvers || [], tollKm: s.tollKm, tollCost: s.tollCost, fuelCost: s.fuelCost, hasToll: s.hasToll, onRoute: radarsOnRoute(s.coords, cum) };
+  const r = { coords: s.coords, cum, total: s.total, duration: s.duration, maneuvers: s.maneuvers || [], tollKm: s.tollKm, tollCost: s.tollCost, tollExact: s.tollExact, tollDetail: s.tollDetail || [], fuelCost: s.fuelCost, hasToll: s.hasToll, onRoute: radarsOnRoute(s.coords, cum) };
   start(s.dest, r, { ...s.opts, via: s.via || [] });
   state.userS = s.userS || 0;
   return state;
@@ -353,7 +355,7 @@ export async function reroute(fix) {
     const rs = await plan({ lat: fix.lat, lon: fix.lon }, state.dest, { ...state.opts, via });
     state.via = via;
     const r = rs[0];
-    Object.assign(state, { coords: r.coords, cum: r.cum, total: r.total, duration: r.duration, maneuvers: r.maneuvers || [], tollKm: r.tollKm, tollCost: r.tollCost, fuelCost: r.fuelCost, onRoute: r.onRoute, hasToll: r.hasToll, lastIdx: 0, userS: 0, offSince: 0 });
+    Object.assign(state, { coords: r.coords, cum: r.cum, total: r.total, duration: r.duration, maneuvers: r.maneuvers || [], tollKm: r.tollKm, tollCost: r.tollCost, tollExact: !!r.tollExact, tollDetail: r.tollDetail || [], fuelCost: r.fuelCost, onRoute: r.onRoute, hasToll: r.hasToll, lastIdx: 0, userS: 0, offSince: 0 });
     emit('route', state);
     return true;
     persist();

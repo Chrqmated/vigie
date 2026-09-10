@@ -7,7 +7,8 @@
   "scripts": {
     "data": "node tools/build-radars.mjs",
     "icons": "node tools/make-icons.mjs",
-    "test": "node tools/test-geom.mjs && node tools/test-route.mjs",
+    "test": "node tools/test-geom.mjs && node tools/test-route.mjs && node tools/test-tolls.mjs",
+    "tolls": "node tools/build-tolls.mjs",
     "serve": "npx --yes serve -l 8080 ."
   }
 }
