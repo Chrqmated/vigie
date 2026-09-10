@@ -1,5 +1,5 @@
 // Service worker Vigie : app en cache (hors-ligne), tuiles en cache opportuniste
-const VERSION = 'vigie-v2';
+const VERSION = 'vigie-v3';
 const SHELL = [
   './', './index.html', './css/app.css', './manifest.webmanifest',
   './js/app.js', './js/alerts.js', './js/audio.js', './js/custom.js', './js/geo.js', './js/geom.js', './js/map.js',
@@ -22,11 +22,15 @@ self.addEventListener('fetch', e => {
   const url = new URL(e.request.url);
   if (e.request.method !== 'GET') return;
   if (url.origin === location.origin) {
-    // app : cache d'abord, réseau en secours (et mise à jour silencieuse)
-    e.respondWith(caches.match(e.request, { ignoreSearch: true }).then(hit => {
-      const net = fetch(e.request).then(res => { if (res.ok) caches.open(VERSION).then(c => c.put(e.request, res.clone())); return res; }).catch(() => hit);
-      return hit || net;
-    }));
+    const heavy = /[/](vendor|data|icons)[/]/.test(url.pathname);
+    if (heavy) {
+      // gros fichiers stables : cache d'abord
+      e.respondWith(caches.match(e.request, { ignoreSearch: true }).then(hit => hit || fetch(e.request).then(res => { if (res.ok) caches.open(VERSION).then(c => c.put(e.request, res.clone())); return res; })));
+    } else {
+      // app (HTML, JS, CSS) : réseau d'abord pour avoir toujours la dernière version, cache si hors-ligne
+      e.respondWith(fetch(e.request, { cache: 'no-cache' }).then(res => { if (res.ok) caches.open(VERSION).then(c => c.put(e.request, res.clone())); return res; })
+        .catch(() => caches.match(e.request, { ignoreSearch: true }).then(hit => hit || caches.match('./index.html'))));
+    }
     return;
   }
   if (TILE_HOSTS.includes(url.host)) {

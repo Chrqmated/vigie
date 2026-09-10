@@ -47,7 +47,13 @@ ui.onStart(async () => {
 });
 
 if ('serviceWorker' in navigator) {
-  window.addEventListener('load', () => navigator.serviceWorker.register('./sw.js').catch(() => {}));
+  window.addEventListener('load', () => navigator.serviceWorker.register('./sw.js').then(reg => { reg.update().catch(() => {}); setInterval(() => reg.update().catch(() => {}), 30 * 60000); }).catch(() => {}));
+  let hadController = !!navigator.serviceWorker.controller;
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    if (!hadController) { hadController = true; return; } // première installation
+    if (started) { ui.toast('Nouvelle version installée, elle sera active au prochain lancement', 4000); return; }
+    location.reload();
+  });
 }
 
 // ---------------------------------------------------------------- wake lock
