@@ -83,3 +83,22 @@ export async function stationsAlong(coords, cum, { maxOff = 2000, limit = 3 } = 
   out.sort((a, b) => a.price - b.price);
   return out.slice(0, limit);
 }
+
+/** Toutes les stations dans un rayon (km) avec le prix du carburant choisi — export GeoJSON (sans limite de lignes) */
+const areaCache = new Map();
+export async function stationsInArea(lat, lon, radiusKm) {
+  const key = S.fuelType || 'sp98';
+  const ck = `${key}:${lat.toFixed(2)}:${lon.toFixed(2)}:${Math.round(radiusKm)}`;
+  const c = areaCache.get(ck); if (c && Date.now() - c.ts < 20 * 60000) return c.list;
+  const where = `${key}_prix>0 AND within_distance(geom, geom'POINT(${lon.toFixed(4)} ${lat.toFixed(4)})', ${Math.round(radiusKm)}km)`;
+  const url = `${DS.replace('/records', '/exports/geojson')}?select=id,adresse,ville,cp,${key}_prix,${key}_maj,horaires_automate_24_24&where=${encodeURIComponent(where)}`;
+  const ctrl = new AbortController(); const t = setTimeout(() => ctrl.abort(), 12000);
+  try {
+    const j = await (await fetch(url, { signal: ctrl.signal })).json();
+    const list = (j.features || []).filter(x => x.geometry).map(x => { const p = x.properties; return { id: p.id, name: (p.adresse || '').replace(/\s+/g, ' ').trim(), city: p.ville || '', cp: p.cp || '', lat: x.geometry.coordinates[1], lon: x.geometry.coordinates[0], price: p[`${key}_prix`], maj: p[`${key}_maj`], h24: p.horaires_automate_24_24 === 'Oui' }; });
+    if (areaCache.size > 30) areaCache.delete(areaCache.keys().next().value);
+    areaCache.set(ck, { ts: Date.now(), list });
+    return list;
+  } finally { clearTimeout(t); }
+}
+export function clearAreaCache() { areaCache.clear(); }

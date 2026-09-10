@@ -88,6 +88,7 @@ function addLayers() {
     layout: { 'icon-image': ['get', 'icon'], 'icon-size': ['interpolate', ['linear'], ['zoom'], 9, 0.55, 13, 0.8, 16, 1], 'icon-allow-overlap': true, 'icon-ignore-placement': true, 'icon-anchor': 'center' } });
   if (activeId) setActive(activeId);
   refreshRoute();
+  addStationLayers();
 }
 
 let pendingRefresh = false;
@@ -238,6 +239,13 @@ function drawIcon(name) {
       g.beginPath(); g.arc(cx + 14, cy - 14, 7, 0, Math.PI * 2); g.fillStyle = '#f97316'; g.fill(); g.lineWidth = 2; g.strokeStyle = '#fff'; g.stroke();
       g.fillStyle = '#fff'; g.font = font(9); g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText('M', cx + 14, cy - 13.5);
     }
+  } else if (kind === 'fuel') {
+    const col = ['#16a34a', '#f59e0b', '#ef4444'][num] || '#16a34a';
+    shadow(); circle(15, col); noShadow(); circle(15, col, '#fff', 2.5);
+    g.fillStyle = '#fff'; roundRect(g, cx - 7, cy - 8, 10, 16, 2); g.fill();
+    g.fillStyle = col; roundRect(g, cx - 5, cy - 6, 6, 5, 1); g.fill();
+    g.strokeStyle = '#fff'; g.lineWidth = 2; g.lineCap = 'round';
+    g.beginPath(); g.moveTo(cx + 4, cy - 3); g.lineTo(cx + 7, cy); g.lineTo(cx + 7, cy + 6); g.stroke();
   } else if (kind === 'feu') {
     shadow(); circle(19, '#ef4444'); noShadow(); circle(19, '#ef4444', '#fff', 3);
     // feu tricolore
@@ -264,15 +272,33 @@ function camera(g, cx, cy, color) {
 
 export { radars };
 
-// ---------------------------------------------------------------- stations carburant
-let stationMarkers = [];
-export function setStations(list) {
-  stationMarkers.forEach(mk => mk.remove()); stationMarkers = [];
-  if (!map || !list) return;
-  for (const st of list) {
-    const el = document.createElement('div'); el.className = 'station-marker';
-    el.innerHTML = `<div class="sm-price">${st.price.toFixed(2).replace('.', ',')} €</div><div class="sm-dot"></div>`;
-    el.addEventListener('click', () => emit('ui:station', st));
-    stationMarkers.push(new maplibregl.Marker({ element: el, anchor: 'bottom' }).setLngLat([st.lon, st.lat]).addTo(map));
-  }
+// ---------------------------------------------------------------- stations carburant (couche)
+let stationById = new Map();
+let stationData = { type: 'FeatureCollection', features: [] };
+function addStationLayers() {
+  if (!map.style || map.getSource('stations')) return;
+  map.addSource('stations', { type: 'geojson', data: stationData });
+  map.addLayer({ id: 'stations-pt', type: 'symbol', source: 'stations', minzoom: 9.5,
+    layout: { 'icon-image': ['concat', 'fuel-', ['get', 'tier']], 'icon-size': ['interpolate', ['linear'], ['zoom'], 10, 0.55, 14, 0.85], 'icon-allow-overlap': true, 'text-field': ['step', ['zoom'], '', 11, ['get', 'label']], 'text-size': ['interpolate', ['linear'], ['zoom'], 11, 10, 15, 13], 'text-font': ['Noto Sans Bold'], 'text-offset': [0, 1.2], 'text-anchor': 'top', 'text-optional': true },
+    paint: { 'text-color': ['match', ['get', 'tier'], 0, '#15803d', 1, '#b45309', '#b91c1c'], 'text-halo-color': 'rgba(255,255,255,0.95)', 'text-halo-width': 1.6 } });
+  map.on('click', 'stations-pt', e => { const f = e.features && e.features[0]; if (f) { e.preventDefault(); const st = stationById.get(f.properties.id); if (st) emit('station:click', st); } });
 }
+/** Affiche toutes les stations d'une zone : couleur selon le prix (tiers), étiquette prix */
+export function setStations(list) {
+  stationById = new Map((list || []).map(s => [s.id, s]));
+  const prices = (list || []).map(s => s.price).sort((a, b) => a - b);
+  const q = p => prices.length ? prices[Math.min(prices.length - 1, Math.floor(prices.length * p))] : 0;
+  const t1 = q(0.25), t2 = q(0.6);
+  stationData = { type: 'FeatureCollection', features: (list || []).map(s => ({ type: 'Feature', geometry: { type: 'Point', coordinates: [s.lon, s.lat] }, properties: { id: s.id, label: s.price.toFixed(2).replace('.', ','), tier: s.price <= t1 ? 0 : s.price <= t2 ? 1 : 2, price: s.price } })) };
+  if (!map) return;
+  addStationLayers();
+  let src = null; try { src = map.getSource('stations'); } catch { src = null; }
+  if (src) src.setData(stationData);
+}
+export function viewCircle() {
+  if (!map) return null;
+  const b = map.getBounds(), c = map.getCenter();
+  const dLat = (b.getNorth() - b.getSouth()) / 2 * 111000, dLon = (b.getEast() - b.getWest()) / 2 * 111000 * Math.cos(c.lat * Math.PI / 180);
+  return { lat: c.lat, lon: c.lng, radiusKm: Math.min(40, Math.max(3, Math.hypot(dLat, dLon) / 1000 * 1.1)), zoom: map.getZoom() };
+}
+export function onMoveEnd(fn) { if (map) map.on('moveend', fn); }

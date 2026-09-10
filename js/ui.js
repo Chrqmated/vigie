@@ -324,6 +324,7 @@ const SCHEMA = [
   ['fuelType', 'select', 'Carburant', 'Prix moyen national en direct (data.economie.gouv.fr)', [['sp98', 'SP98'], ['sp95', 'SP95'], ['e10', 'SP95-E10'], ['gazole', 'Gazole'], ['e85', 'E85']]],
   ['consumption', 'number', 'Consommation (L/100 km)', '', { min: 2, max: 25, step: 0.5 }],
   ['fuelPrice', 'number', 'Prix du carburant (€/L)', '0 = prix moyen national automatique', { min: 0, max: 5, step: 0.01 }],
+  ['showStations', 'toggle', 'Stations sur la carte', 'Toutes les stations de la zone avec leur prix (vert = les moins chères)'],
   ['tollRate', 'number', 'Péage (€/km d’autoroute)', 'Estimation : ≈ 0,11 €/km en moyenne pour une voiture', { min: 0, max: 1, step: 0.01 }],
   ['Signalements'],
   ['mobileTtlHours', 'number', 'Durée radars mobiles (h)', 'Expiration automatique des radars mobiles signalés', { min: 1, max: 48, step: 1 }],
@@ -357,6 +358,7 @@ function afterSetting(k) {
   if (k === 'theme' || k === 'mapStyle') applyTheme();
   if (k === 'keepAwake') emit('ui:wakelock');
   if (k === 'forceAudio') emit('ui:audio');
+  if (k === 'showStations' || k === 'fuelType') emit('ui:stationsmap');
 }
 export function setDbInfo(text) { const n = $('dbInfo'); if (n) n.textContent = text; }
 
@@ -520,7 +522,26 @@ export function setStations(list, onRoute) {
   if (!list || !list.length) return;
   $('stationsTitle').textContent = onRoute ? 'Carburant le moins cher sur le trajet' : 'Carburant le moins cher (10 km)';
   $('stationsList').innerHTML = list.map((s, i) => stationRow(s, i)).join('');
-  $('stationsList').querySelectorAll('.row').forEach(b => b.addEventListener('click', () => { closeSheet(); emit('ui:station', list[+b.dataset.i]); }));
+  $('stationsList').querySelectorAll('.row').forEach(b => b.addEventListener('click', () => { closeSheet(); openStation(list[+b.dataset.i]); }));
+}
+/** Fiche station carburant */
+export function openStation(st) {
+  const c = $('detailContent');
+  const maj = st.maj ? new Date(st.maj).toLocaleString('fr-FR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : '—';
+  c.innerHTML = `<div class="detail">${ICON_FUEL_PIN.replace('class="pin fuel"', 'class="pin fuel" style="width:62px;height:62px"')}<div><h4>${esc(st.city || st.name)}</h4><p>${esc(st.name)}${st.cp ? ' · ' + esc(st.cp) : ''}</p></div></div>
+    <div class="kv">
+      <div><span>${fuel.FUELS[S.fuelType] || 'Carburant'}</span><b style="color:var(--ok);font-size:20px">${st.price.toFixed(3).replace('.', ',')} €/L</b></div>
+      <div><span>Mis à jour</span>${maj}</div>
+      <div><span>Automate 24/24</span>${st.h24 ? 'Oui' : 'Non / inconnu'}</div>
+      ${st.detourMin != null ? `<div><span>Détour</span>${st.detourMin <= 1 ? 'sur la route' : '≈ ' + st.detourMin + ' min'}</div>` : ''}
+    </div>
+    <div class="btnrow">
+      <button class="btn secondary" id="stGo">Itinéraire</button>
+      <button class="btn" id="stVia" ${route.isActive() || currentPlanDest() ? '' : 'hidden'}>Étape sur le trajet</button>
+    </div>`;
+  c.querySelector('#stGo').addEventListener('click', () => { close('mDetail'); emit('ui:routeto', { name: 'Station ' + (st.city || st.name), sub: st.name, lat: st.lat, lon: st.lon }); });
+  c.querySelector('#stVia').addEventListener('click', () => { close('mDetail'); emit('ui:station', st); });
+  open('mDetail');
 }
 export function showResume(name) { $('resumeName').textContent = 'vers ' + name; $('resume').classList.add('show'); }
 export function hideResume() { $('resume').classList.remove('show'); }

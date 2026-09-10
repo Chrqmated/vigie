@@ -35,10 +35,22 @@ async function loadStations() {
     let list, onRoute = false;
     if (route.isActive()) { list = route.route.stations || await fuel.stationsAlong(route.route.coords, route.route.cum); route.route.stations = list; onRoute = true; }
     else list = await fuel.stationsNear(f.lat, f.lon, 10, 3);
-    ui.setStations(list, onRoute); map.setStations(list);
+    ui.setStations(list, onRoute);
   } catch (e) { console.warn('stations', e); }
 }
 on('ui:stations', loadStations);
+
+// couche « toutes les stations » selon la zone affichée
+let stationsTimer = 0, lastArea = null;
+async function loadStationsMap(force = false) {
+  if (!S.showStations) { map.setStations([]); lastArea = null; return; }
+  const v = map.viewCircle(); if (!v || v.zoom < 9.5) return;
+  if (!force && lastArea && Math.hypot((v.lat - lastArea.lat) * 111, (v.lon - lastArea.lon) * 75) < lastArea.radiusKm * 0.35 && v.radiusKm <= lastArea.radiusKm * 1.2) return;
+  try { const list = await fuel.stationsInArea(v.lat, v.lon, v.radiusKm); lastArea = v; map.setStations(list); } catch (e) { console.warn('stations carte', e); }
+}
+on('map:ready', () => map.onMoveEnd(() => { clearTimeout(stationsTimer); stationsTimer = setTimeout(() => loadStationsMap(), 700); }));
+on('ui:stationsmap', () => { fuel.clearAreaCache(); lastArea = null; loadStationsMap(true); loadStations(); });
+on('station:click', st => ui.openStation(st));
 
 // ---------------------------------------------------------------- démarrage
 map.init('map', ui.resolveTheme());
@@ -193,7 +205,7 @@ on('ui:gpx', async t => {
   try { await navigator.clipboard.writeText(gpx); ui.toast('GPX copié dans le presse-papiers'); }
   catch { const a = document.createElement('a'); a.href = 'data:application/gpx+xml;charset=utf-8,' + encodeURIComponent(gpx); a.download = name; document.body.appendChild(a); a.click(); a.remove(); }
 });
-function stopRoute() { route.stop(); ui.setNav(null); map.setStations([]); ui.setTurn(null); ui.setNextTitle(false); engine.reset(); activeId = null; ui.hideAlert(); map.refreshRoute(); }
+function stopRoute() { route.stop(); ui.setNav(null); ui.setTurn(null); ui.setNextTitle(false); engine.reset(); activeId = null; ui.hideAlert(); map.refreshRoute(); }
 function onArrived() { audio.ok(); if (S.turnVoice) audio.speak('Vous êtes arrivé à destination', { priority: true }); stopRoute(); ui.toast('Arrivé à destination', 4000); }
 async function doReroute(fix) {
   if (S.turnVoice) audio.speak('Recalcul de l’itinéraire');

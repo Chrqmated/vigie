@@ -45,6 +45,7 @@ export const DEFAULTS = {
   avoidTolls: false,
   avoidRadars: false,
   fuelType: 'sp98',
+  showStations: true,
   consumption: 7,           // L/100 km
   fuelPrice: 0,             // €/L, 0 = prix moyen national en direct
   tollRate: 0.11,           // €/km d'autoroute à péage (estimation)
